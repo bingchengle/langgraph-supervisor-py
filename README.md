@@ -1,381 +1,283 @@
-# 🤖 LangGraph Multi-Agent Supervisor
+# 开源项目智能选型助手
 
-> **Note**: We now recommend using the **supervisor pattern directly via tools** rather than this library for most use cases. The tool-calling approach gives you more control over context engineering and is the recommended pattern in the [LangChain multi-agent guide](https://docs.langchain.com/oss/python/langchain/multi-agent). See our [supervisor tutorial](https://docs.langchain.com/oss/python/langchain/supervisor) for a step-by-step guide. We're making this library compatible with LangChain 1.0 to help users upgrade their existing code. If you find this library solves a problem that can't be easily addressed with the manual supervisor pattern, we'd love to hear about your use case!
+基于 LangGraph 多智能体架构的开源项目智能推荐系统，通过 LLM 语义理解 + 自动关键词提取 + GitHub/PyPI 搜索，实现精准的开源项目推荐。
 
-A Python library for creating hierarchical multi-agent systems using [LangGraph](https://github.com/langchain-ai/langgraph). Hierarchical systems are a type of [multi-agent](https://langchain-ai.github.io/langgraph/concepts/multi_agent) architecture where specialized agents are coordinated by a central **supervisor** agent. The supervisor controls all communication flow and task delegation, making decisions about which agent to invoke based on the current context and task requirements.
+## 项目简介
 
-## Features
+「开源项目智能选型助手」是一个基于多智能体架构的智能推荐系统，旨在帮助开发者快速找到适合其需求的开源项目。系统通过大语言模型理解用户的自然语言需求，自动提取关键词，然后在 GitHub 和 PyPI 上搜索相关项目，最后进行多维度评估并给出推荐结果。
 
-- 🤖 **Create a supervisor agent** to orchestrate multiple specialized agents
-- 🛠️ **Tool-based agent handoff mechanism** for communication between agents
-- 📝 **Flexible message history management** for conversation control
+## 解决的痛点
 
-This library is built on top of [LangGraph](https://github.com/langchain-ai/langgraph), a powerful framework for building agent applications, and comes with out-of-box support for [streaming](https://langchain-ai.github.io/langgraph/how-tos/#streaming), [short-term and long-term memory](https://langchain-ai.github.io/langgraph/concepts/memory/) and [human-in-the-loop](https://langchain-ai.github.io/langgraph/concepts/human_in_the_loop/)
+- **盲目选库**：不再依赖主观判断，系统基于客观分析推荐项目
+- **只看 Star**：不仅关注项目热度，还考虑成熟度、生态、风险等多个维度
+- **新手推荐不准**：针对新手友好度进行评估，为不同水平的开发者推荐合适的项目
+- **垂直场景搜不到**：支持插件、二次开发、业务工具等垂直场景的项目推荐
 
-## Installation
+## 核心功能
+
+- **自然语言理解**：支持用户使用自然语言描述需求
+- **智能关键词提取**：自动从用户需求中提取核心关键词
+- **多源搜索**：同时搜索 GitHub 和 PyPI 上的项目
+- **多维度评估**：从流行度、成熟度、生态、风险、上手难度、性能、体积、文档友好度等多个维度评估项目
+- **智能推荐**：基于评估结果给出最适合用户需求的项目推荐
+- **支持垂直场景**：特别支持插件、二次开发、业务工具等垂直场景的需求
+
+## 项目架构与起源说明
+
+本项目基于 **langgraph-supervisor-py** 多智能体项目扩展而来，保留了原有的 Supervisor 调度 + 多 Agent 分工协作的核心架构，在此基础上重新实现了完整的业务逻辑，包括需求理解、关键词提取、开源库搜索、多维度评估、推荐排序等功能。
+
+项目在原有架构基础上进行了以下扩展：
+- **通用语义理解**：支持任意领域的自然语言需求分析，不再局限于特定技术领域
+- **动态加权**：根据用户需求自动调整评估维度权重，提高推荐准确性
+- **垂直场景搜索**：特别支持插件、二次开发、业务工具等垂直场景的需求
+- **前端展示**：提供直观的项目推荐结果展示界面
+
+## 系统架构
+
+### 多智能体流程
+
+1. **需求理解智能体**：分析用户输入的自然语言需求，提取核心关键词和搜索查询
+2. **搜索智能体**：使用提取的搜索查询在 GitHub 和 PyPI 上搜索相关项目
+3. **评估智能体**：对搜索到的项目进行多维度评估，包含6个专业评估Agent：
+   - **流行度评估Agent**：评估项目的Star、Fork、Watch等指标
+   - **成熟度评估Agent**：评估项目的版本号、创建时间等指标
+   - **生态评估Agent**：评估项目的贡献者数量、文档、许可证等指标
+   - **风险评估Agent**：评估项目的安全漏洞、更新频率等指标
+   - **场景匹配Agent**：评估项目与用户需求的匹配度
+   - **趋势评估Agent**：评估项目的活跃度和增长趋势
+4. **推荐智能体**：基于评估结果生成推荐报告
+
+### 系统流程图
+
+```
+┌───────────┐     ┌─────────────────────┐     ┌─────────────────────┐
+│ 用户输入  │────>│ 需求理解智能体     │────>│ 搜索智能体         │
+└───────────┘     │ (语义理解+关键词提取)│     │ (GitHub+PyPI搜索) │
+                  └─────────────────────┘     └─────────────────────┘
+                                                      │
+                                                      ▼
+┌───────────┐     ┌─────────────────────┐     ┌─────────────────────┐
+│ 推荐结果  │<────│ 推荐智能体         │<────│ 评估智能体         │
+└───────────┘     │ (生成推荐报告)     │     │ (多维度评估)       │
+                  └─────────────────────┘     └─────────────────────┘
+                                                      │
+                                                      ▼
+                                   ┌─────────────────────────────────┐
+                                   │ 6个专业评估Agent                │
+                                   │ ┌─────────────────────────────┐ │
+                                   │ │ 流行度评估Agent              │ │
+                                   │ │ 成熟度评估Agent              │ │
+                                   │ │ 生态评估Agent                │ │
+                                   │ │ 风险评估Agent                │ │
+                                   │ │ 场景匹配Agent                │ │
+                                   │ │ 趋势评估Agent                │ │
+                                   │ └─────────────────────────────┘ │
+                                   └─────────────────────────────────┘
+```
+
+## 技术栈
+
+- **后端**：Python 3.8+
+- **Web 框架**：FastAPI
+- **大语言模型**：支持多种模型（qwen-turbo, kimi, glm, deepseek）
+- **搜索 API**：GitHub API, PyPI API
+- **架构**：LangGraph 多智能体架构
+- **其他库**：requests, json, concurrent.futures
+
+## 快速启动
+
+### 环境准备
+
+1. 确保已安装 Python 3.8+
+2. 安装依赖包：
 
 ```bash
-pip install langgraph-supervisor
+pip install fastapi uvicorn requests
 ```
 
-> [!Note]
-> LangGraph Supervisor requires Python >= 3.10
+### 配置
 
-## Quickstart
+1. 在 `simple_app.py` 文件中配置 API Key：
 
-Here's a simple example of a supervisor managing two specialized agents:
+```python
+api_key = "your_api_key_here"
+api_url = "https://fast.poloai.top"
+```
 
-![Supervisor Architecture](static/img/supervisor.png)
+### 启动服务
 
 ```bash
-pip install langgraph-supervisor langchain-openai
-
-export OPENAI_API_KEY=<your_api_key>
+# 设置环境变量确保中文显示正常
+$env:PYTHONIOENCODING='utf-8'; $env:LANG='zh_CN.UTF-8'; $env:LC_ALL='zh_CN.UTF-8'; python api.py
 ```
 
-```python
-from langchain_openai import ChatOpenAI
+服务将在 `http://0.0.0.0:8004` 上运行。
 
-from langgraph_supervisor import create_supervisor
-from langgraph.prebuilt import create_react_agent
+## 使用示例
 
-model = ChatOpenAI(model="gpt-4o")
+### 示例 1：推荐雨课堂二次开发项目
 
-# Create specialized agents
-
-def add(a: float, b: float) -> float:
-    """Add two numbers."""
-    return a + b
-
-def multiply(a: float, b: float) -> float:
-    """Multiply two numbers."""
-    return a * b
-
-def web_search(query: str) -> str:
-    """Search the web for information."""
-    return (
-        "Here are the headcounts for each of the FAANG companies in 2024:\n"
-        "1. **Facebook (Meta)**: 67,317 employees.\n"
-        "2. **Apple**: 164,000 employees.\n"
-        "3. **Amazon**: 1,551,000 employees.\n"
-        "4. **Netflix**: 14,000 employees.\n"
-        "5. **Google (Alphabet)**: 181,269 employees."
-    )
-
-math_agent = create_react_agent(
-    model=model,
-    tools=[add, multiply],
-    name="math_expert",
-    prompt="You are a math expert. Always use one tool at a time."
-)
-
-research_agent = create_react_agent(
-    model=model,
-    tools=[web_search],
-    name="research_expert",
-    prompt="You are a world class researcher with access to web search. Do not do any math."
-)
-
-# Create supervisor workflow
-workflow = create_supervisor(
-    [research_agent, math_agent],
-    model=model,
-    prompt=(
-        "You are a team supervisor managing a research expert and a math expert. "
-        "For current events, use research_agent. "
-        "For math problems, use math_agent."
-    )
-)
-
-# Compile and run
-app = workflow.compile()
-result = app.invoke({
-    "messages": [
-        {
-            "role": "user",
-            "content": "what's the combined headcount of the FAANG companies in 2024?"
-        }
-    ]
-})
+**输入**：
+```json
+{
+  "user_need": "推荐雨课堂二次开发项目"
+}
 ```
 
-> [!TIP]
-> For developing, debugging, and deploying AI agents and LLM applications, see [LangSmith](https://docs.langchain.com/langsmith/home).
-
-## Message History Management
-
-You can control how messages from worker agents are added to the overall conversation history of the multi-agent system:
-
-Include full message history from an agent:
-
-![Full History](static/img/full_history.png)
-
-```python
-workflow = create_supervisor(
-    agents=[agent1, agent2],
-    output_mode="full_history"
-)
-```
-
-Include only the final agent response:
-
-![Last Message](static/img/last_message.png)
-
-```python
-workflow = create_supervisor(
-    agents=[agent1, agent2],
-    output_mode="last_message"
-)
-```
-
-## Multi-level Hierarchies
-
-You can create multi-level hierarchical systems by creating a supervisor that manages multiple supervisors.
-
-```python
-research_team = create_supervisor(
-    [research_agent, math_agent],
-    model=model,
-    supervisor_name="research_supervisor"
-).compile(name="research_team")
-
-writing_team = create_supervisor(
-    [writing_agent, publishing_agent],
-    model=model,
-    supervisor_name="writing_supervisor"
-).compile(name="writing_team")
-
-top_level_supervisor = create_supervisor(
-    [research_team, writing_team],
-    model=model,
-    supervisor_name="top_level_supervisor"
-).compile(name="top_level_supervisor")
-```
-
-## Adding Memory
-
-You can add [short-term](https://langchain-ai.github.io/langgraph/how-tos/persistence/) and [long-term](https://langchain-ai.github.io/langgraph/how-tos/cross-thread-persistence/) [memory](https://langchain-ai.github.io/langgraph/concepts/memory/) to your supervisor multi-agent system. Since `create_supervisor()` returns an instance of `StateGraph` that needs to be compiled before use, you can directly pass a [checkpointer](https://langchain-ai.github.io/langgraph/reference/checkpoints/#langgraph.checkpoint.base.BaseCheckpointSaver) or a [store](https://langchain-ai.github.io/langgraph/reference/store/#langgraph.store.base.BaseStore) instance to the `.compile()` method:
-
-```python
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.store.memory import InMemoryStore
-
-checkpointer = InMemorySaver()
-store = InMemoryStore()
-
-model = ...
-research_agent = ...
-math_agent = ...
-
-workflow = create_supervisor(
-    [research_agent, math_agent],
-    model=model,
-    prompt="You are a team supervisor managing a research expert and a math expert.",
-)
-
-# Compile with checkpointer/store
-app = workflow.compile(
-    checkpointer=checkpointer,
-    store=store
-)
-```
-
-## How to customize
-
-### Customizing handoff tools
-
-By default, the supervisor uses handoff tools created with the prebuilt `create_handoff_tool`. You can also create your own, custom handoff tools. Here are some ideas on how you can modify the default implementation:
-
-* change tool name and/or description
-* add tool call arguments for the LLM to populate, for example a task description for the next agent
-* change what data is passed to the subagent as part of the handoff: by default `create_handoff_tool` passes **full** message history (all of the messages generated in the supervisor up to this point), as well as a tool message indicating successful handoff.
-
-Here is an example of how to pass customized handoff tools to `create_supervisor`:
-
-```python
-from langgraph_supervisor import create_handoff_tool
-workflow = create_supervisor(
-    [research_agent, math_agent],
-    tools=[
-        create_handoff_tool(agent_name="math_expert", name="assign_to_math_expert", description="Assign task to math expert"),
-        create_handoff_tool(agent_name="research_expert", name="assign_to_research_expert", description="Assign task to research expert")
-    ],
-    model=model,
-)
-```
-
-You can also control whether the handoff tool invocation messages are added to the state. By default, they are added (`add_handoff_messages=True`), but you can disable this if you want a more concise history:
-
-```python
-workflow = create_supervisor(
-    [research_agent, math_agent],
-    model=model,
-    add_handoff_messages=False
-)
-```
-
-Additionally, you can customize the prefix used for the automatically generated handoff tools:
-
-```python
-workflow = create_supervisor(
-    [research_agent, math_agent],
-    model=model,
-    handoff_tool_prefix="delegate_to"
-)
-# This will create tools named: delegate_to_research_expert, delegate_to_math_expert
-```
-
-Here is an example of what a custom handoff tool might look like:
-
-```python
-from typing import Annotated
-
-from langchain_core.tools import tool, BaseTool, InjectedToolCallId
-from langchain_core.messages import ToolMessage
-from langgraph.types import Command
-from langgraph.prebuilt import InjectedState
-from langgraph_supervisor.handoff import METADATA_KEY_HANDOFF_DESTINATION
-
-def create_custom_handoff_tool(*, agent_name: str, name: str | None, description: str | None) -> BaseTool:
-
-    @tool(name, description=description)
-    def handoff_to_agent(
-        # you can add additional tool call arguments for the LLM to populate
-        # for example, you can ask the LLM to populate a task description for the next agent
-        task_description: Annotated[str, "Detailed description of what the next agent should do, including all of the relevant context."],
-        # you can inject the state of the agent that is calling the tool
-        state: Annotated[dict, InjectedState],
-        tool_call_id: Annotated[str, InjectedToolCallId],
-    ):
-        tool_message = ToolMessage(
-            content=f"Successfully transferred to {agent_name}",
-            name=name,
-            tool_call_id=tool_call_id,
-        )
-        messages = state["messages"]
-        return Command(
-            goto=agent_name,
-            graph=Command.PARENT,
-            # NOTE: this is a state update that will be applied to the swarm multi-agent graph (i.e., the PARENT graph)
-            update={
-                "messages": messages + [tool_message],
-                "active_agent": agent_name,
-                # optionally pass the task description to the next agent
-                # NOTE: individual agents would need to have `task_description` in their state schema
-                # and would need to implement logic for how to consume it
-                "task_description": task_description,
-            },
-        )
-
-    handoff_to_agent.metadata = {METADATA_KEY_HANDOFF_DESTINATION: agent_name}
-    return handoff_to_agent
-```
-
-### Message Forwarding
-
-You can equip the supervisor with a tool to directly forward the last message received from a worker agent straight to the final output of the graph using `create_forward_message_tool`. This is useful when the supervisor determines that the worker's response is sufficient and doesn't require further processing or summarization by the supervisor itself. It saves tokens for the supervisor and avoids potential misrepresentation of the worker's response through paraphrasing.
-
-```python
-from langgraph_supervisor.handoff import create_forward_message_tool
-
-# Assume research_agent and math_agent are defined as before
-
-forwarding_tool = create_forward_message_tool("supervisor") # The argument is the name to assign to the resulting forwarded message
-workflow = create_supervisor(
-    [research_agent, math_agent],
-    model=model,
-    # Pass the forwarding tool along with any other custom or default handoff tools
-    tools=[forwarding_tool]
-)
-```
-
-This creates a tool named `forward_message` that the supervisor can invoke. The tool expects an argument `from_agent` specifying which agent's last message should be forwarded directly to the output.
-
-## Using Functional API 
-
-Here's a simple example of a supervisor managing two specialized agentic workflows created using Functional API:
-
-```bash
-pip install langgraph-supervisor langchain-openai
-
-export OPENAI_API_KEY=<your_api_key>
-```
-
-```python
-from langgraph.prebuilt import create_react_agent
-from langgraph_supervisor import create_supervisor
-
-from langchain_openai import ChatOpenAI
-
-from langgraph.func import entrypoint, task
-from langgraph.graph import add_messages
-
-model = ChatOpenAI(model="gpt-4o")
-
-# Create specialized agents
-
-# Functional API - Agent 1 (Joke Generator)
-@task
-def generate_joke(messages):
-    """First LLM call to generate initial joke"""
-    system_message = {
-        "role": "system", 
-        "content": "Write a short joke"
+**输出**：
+```json
+{
+  "user_need": "推荐雨课堂二次开发项目",
+  "llm_result": {
+    "key_requirements": ["雨课堂", "二次开发", "插件", "开源项目"],
+    "dimensions_needed": ["流行度", "成熟度", "生态", "风险", "上手难度", "性能", "体积", "文档友好度"],
+    "weights": {
+      "流行度": 0.14285714285714288,
+      "成熟度": 0.19047619047619052,
+      "生态": 0.14285714285714288,
+      "风险": 0.09523809523809526,
+      "上手难度": 0.09523809523809526,
+      "性能": 0.09523809523809526,
+      "体积": 0.09523809523809526,
+      "文档友好度": 0.14285714285714288
+    },
+    "intent": {
+      "core_keywords": ["雨课堂", "二次开发", "插件", "开源项目"],
+      "search_query": "推荐雨课堂二次开发项目"
     }
-    msg = model.invoke(
-        [system_message] + messages
-    )
-    return msg
-
-@entrypoint()
-def joke_agent(state):
-    joke = generate_joke(state['messages']).result()
-    messages = add_messages(state["messages"], [joke])
-    return {"messages": messages}
-
-joke_agent.name = "joke_agent"
-
-# Graph API - Agent 2 (Research Expert)
-def web_search(query: str) -> str:
-    """Search the web for information."""
-    return (
-        "Here are the headcounts for each of the FAANG companies in 2024:\n"
-        "1. **Facebook (Meta)**: 67,317 employees.\n"
-        "2. **Apple**: 164,000 employees.\n"
-        "3. **Amazon**: 1,551,000 employees.\n"
-        "4. **Netflix**: 14,000 employees.\n"
-        "5. **Google (Alphabet)**: 181,269 employees."
-    )
-
-research_agent = create_react_agent(
-    model=model,
-    tools=[web_search],
-    name="research_expert",
-    prompt="You are a world class researcher with access to web search. Do not do any math."
-)
-
-# Create supervisor workflow
-workflow = create_supervisor(
-    [research_agent, joke_agent],
-    model=model,
-    prompt=(
-        "You are a team supervisor managing a research expert and a joke expert. "
-        "For current events, use research_agent. "
-        "For any jokes, use joke_agent."
-    )
-)
-
-# Compile and run
-app = workflow.compile()
-result = app.invoke({
-    "messages": [
-        {
-            "role": "user",
-            "content": "Share a joke to relax and start vibe coding for my next project idea."
-        }
-    ]
-})
-
-for m in result["messages"]:
-    m.pretty_print()
+  },
+  "projects": [],
+  "message": "未找到匹配的开源项目"
+}
 ```
+
+### 示例 2：推荐前端项目
+
+**输入**：
+```json
+{
+  "user_need": "推荐前端项目"
+}
+```
+
+**输出**：
+```json
+{
+  "user_need": "推荐前端项目",
+  "llm_result": {
+    "key_requirements": ["前端", "web", "javascript", "前端开发"],
+    "dimensions_needed": ["流行度", "成熟度", "生态", "风险", "上手难度", "性能", "体积", "文档友好度"],
+    "weights": {
+      "流行度": 0.15,
+      "成熟度": 0.15,
+      "生态": 0.2,
+      "风险": 0.1,
+      "上手难度": 0.1,
+      "性能": 0.1,
+      "体积": 0.1,
+      "文档友好度": 0.1
+    },
+    "intent": {
+      "core_keywords": ["前端", "web", "javascript", "前端开发"],
+      "search_query": "推荐前端项目"
+    }
+  },
+  "projects": [
+    {
+      "name": "MallChatWeb",
+      "description": "mallchat的前端项目，是一个既能购物又能聊天的电商系统。以企业级开发规范的要求来实现它，电商该有的购物车，订单，支付，推荐，搜索，更新，绩效，通知，物流，客服，全功能应有尽有。持续更新ing",
+      "html_url": "https://github.com/Evansy/MallChatWeb",
+      "total_score": 0.66,
+      "dimension_scores": {
+        "流行度": 0.4,
+        "成熟度": 0.6000000000000001,
+        "生态": 0.7,
+        "风险": 1.0,
+        "上手难度": 1.0,
+        "性能": 0.2
+      }
+    },
+    // 更多项目...
+  ]
+}
+```
+
+### 示例 3：推荐 agent 项目
+
+**输入**：
+```json
+{
+  "user_need": "推荐agent项目"
+}
+```
+
+**输出**：
+```json
+{
+  "user_need": "推荐agent项目",
+  "llm_result": {
+    "key_requirements": ["agent", "智能体", "AI 助手", "代理"],
+    "dimensions_needed": ["流行度", "成熟度", "生态", "风险", "上手难度", "性能", "体积", "文档友好度"],
+    "weights": {
+      "流行度": 0.13636363636363638,
+      "成熟度": 0.18181818181818185,
+      "生态": 0.13636363636363638,
+      "风险": 0.09090909090909093,
+      "上手难度": 0.09090909090909093,
+      "性能": 0.13636363636363638,
+      "体积": 0.09090909090909093,
+      "文档友好度": 0.13636363636363638
+    },
+    "intent": {
+      "core_keywords": ["agent", "智能体", "AI 助手", "代理"],
+      "search_query": "agent项目"
+    }
+  },
+  "projects": [
+    {
+      "name": "agent-dev",
+      "description": "《大模型项目实战：Agent开发与应用》配套资源",
+      "html_url": "https://github.com/little51/agent-dev",
+      "total_score": 0.5873145800396757,
+      "dimension_scores": {
+        "流行度": 0.4,
+        "成熟度": 0.43657290019837813,
+        "生态": 0.5,
+        "风险": 1.0,
+        "上手难度": 1.0,
+        "性能": 0.2
+      }
+    },
+    // 更多项目...
+  ]
+}
+```
+
+## 注意事项
+
+1. **API Key**：需要配置有效的大语言模型 API Key，默认使用国内 API 服务 `https://fast.poloai.top`
+2. **编码问题**：已在系统中设置 `PYTHONIOENCODING=utf-8`，确保中文显示正常
+3. **国内可运行**：使用国内 API 服务，无需科学上网即可运行
+4. **搜索限制**：GitHub API 对查询长度有限制，系统会自动截断过长的搜索查询
+5. **网络依赖**：需要网络连接以访问 GitHub API、PyPI API 和大语言模型 API
+
+## 项目亮点
+
+1. **多智能体架构**：基于 LangGraph 多智能体架构，各智能体分工明确，协作高效
+2. **语义理解**：使用大语言模型理解用户需求，支持自然语言输入
+3. **智能搜索**：自动提取关键词，在 GitHub 和 PyPI 上搜索相关项目
+4. **多维度评估**：从多个维度评估项目，确保推荐的项目符合用户需求
+5. **垂直场景支持**：特别支持插件、二次开发、业务工具等垂直场景的需求
+6. **开源免费**：完全开源，可自由使用和修改
+7. **易于部署**：提供简洁的快速启动步骤，易于部署和使用
+
+## 适用场景
+
+- **毕设项目**：适合作为计算机相关专业的毕业设计项目
+- **竞赛项目**：可用于各类编程竞赛和创新大赛
+- **个人项目**：适合开发者个人使用，帮助快速找到适合的开源项目
+- **企业内部工具**：可集成到企业内部开发流程中，帮助团队选择合适的开源项目
+
+## 许可证
+
+MIT License
