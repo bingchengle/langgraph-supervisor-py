@@ -97,11 +97,13 @@ pip install fastapi uvicorn requests
 
 ### 配置
 
-1. 在 `simple_app.py` 文件中配置 API Key：
+1. 通过环境变量配置模型服务（避免在代码中硬编码密钥）：
 
-```python
-api_key = "your_api_key_here"
-api_url = "https://fast.poloai.top"
+```bash
+$env:MODEL_API_KEY="your_api_key_here"
+$env:MODEL_API_URL="https://fast.poloai.top"
+# 可选：覆盖候选模型列表（逗号分隔）
+$env:MODEL_CANDIDATES="qwen-turbo,kimi,glm,deepseek"
 ```
 
 ### 启动服务
@@ -255,7 +257,7 @@ $env:PYTHONIOENCODING='utf-8'; $env:LANG='zh_CN.UTF-8'; $env:LC_ALL='zh_CN.UTF-8
 
 ## 注意事项
 
-1. **API Key**：需要配置有效的大语言模型 API Key，默认使用国内 API 服务 `https://fast.poloai.top`
+1. **API Key**：请通过环境变量 `MODEL_API_KEY` 配置；默认 API 地址为 `https://fast.poloai.top`
 2. **编码问题**：已在系统中设置 `PYTHONIOENCODING=utf-8`，确保中文显示正常
 3. **国内可运行**：使用国内 API 服务，无需科学上网即可运行
 4. **搜索限制**：GitHub API 对查询长度有限制，系统会自动截断过长的搜索查询

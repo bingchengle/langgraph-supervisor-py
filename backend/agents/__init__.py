@@ -1,21 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-智能体模块
-"""
-
-from .popularity_agent import PopularityAgent
-from .maturity_agent import MaturityAgent
-from .ecosystem_agent import EcosystemAgent
-from .risk_agent import RiskAgent
-from .scenario_agent import ScenarioAgent
-from .trend_agent import TrendAgent
+"""智能体模块。"""
 
 __all__ = [
-    'PopularityAgent',
-    'MaturityAgent',
-    'EcosystemAgent',
-    'RiskAgent',
-    'ScenarioAgent',
-    'TrendAgent'
+    "PopularityAgent",
+    "MaturityAgent",
+    "EcosystemAgent",
+    "RiskAgent",
+    "ScenarioAgent",
+    "TrendAgent",
+    "create_popularity_agent",
+    "create_maturity_agent",
+    "create_ecosystem_agent",
+    "create_risk_agent",
+    "create_scenario_agent",
+    "create_trend_agent",
 ]

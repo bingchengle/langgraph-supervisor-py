@@ -19,6 +19,7 @@ const favorites = ref([])
 const history = ref([])
 const userNeedEdit = ref('')
 const showNeedEdit = ref(false)
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8004'
 
 // 热门提问
 const hotQuestions = [
@@ -55,8 +56,8 @@ const recommendProjects = async () => {
   
   loading.value = true
   try {
-    const response = await axios.post('http://localhost:8003/api/recommend', {
-      need: userNeed.value
+    const response = await axios.post(`${apiBaseUrl}/api/recommend`, {
+      user_need: userNeed.value
     })
     
     // 修正评分逻辑，重型框架上手难度自动下调
@@ -445,6 +446,9 @@ const loadFromHistory = (item) => {
 
 // 生成项目分析（差异化）
 const generateProjectAnalysis = (project, index) => {
+  if (project.project_analysis) {
+    return [project.project_analysis]
+  }
   const analysis = []
   
   // 基于项目名称和得分生成差异化分析
@@ -554,6 +558,9 @@ const generateProjectAnalysis = (project, index) => {
 
 // 生成二创建议（差异化）
 const generateProjectSuggestions = (project, index) => {
+  if (Array.isArray(project.innovation_suggestions) && project.innovation_suggestions.length > 0) {
+    return project.innovation_suggestions
+  }
   const suggestions = []
   
   // 基于项目名称和得分生成差异化建议
@@ -616,11 +623,11 @@ const generateProjectSuggestions = (project, index) => {
 // 健康检查
 onMounted(async () => {
   try {
-    await axios.get('http://localhost:8003/api/health')
+    await axios.get(`${apiBaseUrl}/api/health`)
     console.log('API服务正常')
   } catch (error) {
     console.error('API服务异常:', error)
-    ElMessage.warning('API服务可能未启动，请先运行后端服务')
+    ElMessage.warning(`API服务可能未启动，请确认后端地址: ${apiBaseUrl}`)
   }
 })
 </script>
