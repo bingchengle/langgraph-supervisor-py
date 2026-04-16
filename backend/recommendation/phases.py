@@ -1,12 +1,12 @@
+"""推荐各阶段实现：检索、过滤、评估、组装响应；供 Supervisor 工具链调用。"""
+
 from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
+import hashlib
+import json
 from math import sqrt
-import os
 import re
 import time
-from typing import Any, TypedDict
-
-from langgraph.graph import END, START, StateGraph
+from typing import Any
 
 try:
     from agents.evaluators import (
@@ -21,7 +21,7 @@ except ImportError:
     import sys
     from pathlib import Path
 
-    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from agents.evaluators import (
         EcosystemAgent,
         MaturityAgent,
@@ -32,7 +32,7 @@ except ImportError:
     )
 
 try:
-    from core.llm import (
+    from core.llm_client import (
         generate_project_analysis_and_suggestions,
         get_llm_query_normalization,
         get_llm_requirement_analysis,
@@ -40,7 +40,7 @@ try:
     )
     from core.security import check_safety, normalize_text
 except ImportError:
-    from llm import (
+    from llm_client import (
         generate_project_analysis_and_suggestions,
         get_llm_query_normalization,
         get_llm_requirement_analysis,
@@ -49,29 +49,13 @@ except ImportError:
     from security import check_safety, normalize_text
 from tools import APITools
 
-CANONICAL_CACHE_TTL_SECONDS = 900
-MIN_RECOMMENDED_PROJECTS = 3
-_CANONICAL_PROJECT_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
-ENABLE_REPORT_LLM = os.getenv("ENABLE_REPORT_LLM", "1").strip().lower() not in {"0", "false", "no", "off"}
-
-
-class RecommendationState(TypedDict, total=False):
-    user_need: str
-    original_need: str
-    blocked: bool
-    llm_result: dict[str, Any]
-    normalized_need: str
-    retrieval_queries: list[str]
-    broaden_query: str
-    canonical_query: str
-    normalization_confidence: float
-    core_keywords: list[str]
-    search_query: str
-    semantic_queries: list[str]
-    projects: list[dict[str, Any]]
-    filtered_projects: list[dict[str, Any]]
-    results: list[dict[str, Any]]
-    final_response: dict[str, Any]
+from .state import (
+    ENABLE_REPORT_LLM,
+    MIN_RECOMMENDED_PROJECTS,
+    RecommendationState,
+    _CANONICAL_PROJECT_CACHE,
+    CANONICAL_CACHE_TTL_SECONDS,
+)
 
 
 def _tokenize_text(text: str) -> list[str]:
@@ -93,6 +77,56 @@ def _text_to_vector(text: str) -> dict[str, float]:
     for token in _tokenize_text(text):
         vector[token] = vector.get(token, 0.0) + 1.0
     return vector
+
+
+def _weights_fingerprint(weights: dict[str, Any] | None) -> str:
+    """用于区分「同一 canonical、不同侧重」的缓存与去重键。"""
+    if not weights or not isinstance(weights, dict):
+        return "default"
+    try:
+        items = sorted((str(k), round(float(v), 5)) for k, v in weights.items())
+        raw = json.dumps(items, ensure_ascii=False)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+    except Exception:
+        return "default"
+
+
+def _weighted_total_score(
+    dimension_scores: dict[str, float],
+    weights: dict[str, Any] | None,
+) -> float:
+    """
+    按需求分析返回的维度权重计算综合分。
+    此前实现固定为 6×0.2/0.1，导致「要热门 / 要成熟 / 要新手友好」最终排序几乎相同。
+    """
+    if not dimension_scores:
+        return 0.0
+    legacy = (
+        dimension_scores["流行度"] * 0.2
+        + dimension_scores["成熟度"] * 0.2
+        + dimension_scores["生态"] * 0.2
+        + dimension_scores["风险"] * 0.2
+        + dimension_scores["上手难度"] * 0.1
+        + dimension_scores["性能"] * 0.1
+    )
+    if not weights or not isinstance(weights, dict):
+        return legacy
+    active: dict[str, float] = {}
+    for k, v in weights.items():
+        if k not in dimension_scores:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if fv > 0:
+            active[k] = fv
+    if not active:
+        return legacy
+    total_w = sum(active.values())
+    if total_w <= 0:
+        return legacy
+    return sum((active[k] / total_w) * dimension_scores[k] for k in active)
 
 
 def _cosine_similarity(vec_a: dict[str, float], vec_b: dict[str, float]) -> float:
@@ -119,10 +153,6 @@ def _safety_check(state: RecommendationState) -> RecommendationState:
     if not is_safe:
         print("检测到不安全内容，返回提示")
     return {"blocked": not is_safe}
-
-
-def _route_after_safety(state: RecommendationState) -> str:
-    return "blocked_response" if state.get("blocked") else "intent_worker"
 
 
 def _normalize_input(state: RecommendationState) -> RecommendationState:
@@ -165,32 +195,22 @@ def _search_projects(state: RecommendationState) -> RecommendationState:
     print("正在搜索相关项目...")
     print(f"搜索查询: {search_query}")
 
-    # 如果与已有 canonical 语义接近，则复用已有 canonical 键，保证同义表达结果一致
-    if canonical_query and _CANONICAL_PROJECT_CACHE:
-        query_vector = _text_to_vector(canonical_query)
-        best_key = canonical_query
-        best_score = 0.0
-        for cache_key, (cache_ts, _) in _CANONICAL_PROJECT_CACHE.items():
-            if time.time() - cache_ts > CANONICAL_CACHE_TTL_SECONDS:
-                continue
-            score = _cosine_similarity(query_vector, _text_to_vector(cache_key))
-            if score > best_score:
-                best_score = score
-                best_key = cache_key
-        if best_score >= 0.3:
-            canonical_query = best_key
+    llm_result = state.get("llm_result") or {}
+    wf = _weights_fingerprint(llm_result.get("weights"))
+    # 缓存键同时包含 canonical 与「维度权重指纹」，避免「热门 / 成熟 / 新手」等不同侧重共用同一批召回
+    cache_key = f"{canonical_query}__{wf}" if canonical_query else ""
 
     cached_projects_seed: list[dict[str, Any]] = []
 
-    # 同一语义标准查询在短时间内复用召回结果，提升同义表达一致性
-    if canonical_query:
-        cached = _CANONICAL_PROJECT_CACHE.get(canonical_query)
+    # 同一 canonical + 同一权重侧重在短时间内复用召回结果
+    if cache_key:
+        cached = _CANONICAL_PROJECT_CACHE.get(cache_key)
         if cached and time.time() - cached[0] <= CANONICAL_CACHE_TTL_SECONDS:
             cached_projects = [project.copy() for project in cached[1]]
             if len(cached_projects) >= MIN_RECOMMENDED_PROJECTS:
-                print(f"命中 canonical 缓存: {canonical_query}")
+                print(f"命中召回缓存: {cache_key[:120]}...")
                 return {"projects": cached_projects}
-            print(f"命中 canonical 缓存但数量不足，继续补充召回: {canonical_query}")
+            print(f"命中召回缓存但数量不足，继续补充: {cache_key[:80]}...")
             cached_projects_seed = cached_projects
 
     query_candidates = [
@@ -311,8 +331,8 @@ def _search_projects(state: RecommendationState) -> RecommendationState:
             if len(unique_projects) >= MIN_RECOMMENDED_PROJECTS:
                 break
 
-    if canonical_query and unique_projects:
-        _CANONICAL_PROJECT_CACHE[canonical_query] = (
+    if cache_key and unique_projects:
+        _CANONICAL_PROJECT_CACHE[cache_key] = (
             time.time(),
             [project.copy() for project in unique_projects],
         )
@@ -399,14 +419,7 @@ def _evaluate_projects(state: RecommendationState) -> RecommendationState:
                 "上手难度": scenario["score"],
                 "性能": trend["score"],
             }
-            total_score = (
-                popularity["score"] * 0.2
-                + maturity["score"] * 0.2
-                + ecosystem["score"] * 0.2
-                + risk["score"] * 0.2
-                + scenario["score"] * 0.1
-                + trend["score"] * 0.1
-            )
+            total_score = _weighted_total_score(dimension_scores, llm_result.get("weights"))
             results.append(
                 {
                     "project": project,
@@ -425,10 +438,6 @@ def _evaluate_projects(state: RecommendationState) -> RecommendationState:
 
     results.sort(key=lambda item: item["total_score"], reverse=True)
     return {"results": results[:3]}
-
-
-def _route_after_evaluate(state: RecommendationState) -> str:
-    return "build_success_response" if state.get("results") else "build_empty_response"
 
 
 def _blocked_response(state: RecommendationState) -> RecommendationState:
@@ -495,6 +504,9 @@ def _build_success_response(state: RecommendationState) -> RecommendationState:
                 "project_analysis": "",
                 "innovation_suggestions": [],
             }
+        # 与前端 parseProjectData 对齐：GitHub 字段为 stargazers_count，前端历史使用 stars
+        stars = int(project.get("stargazers_count") or project.get("stars") or 0)
+        forks = project.get("forks_count")
         return {
             "name": project["name"],
             "description": final_description,
@@ -503,6 +515,13 @@ def _build_success_response(state: RecommendationState) -> RecommendationState:
             "dimension_scores": result["dimension_scores"],
             "project_analysis": analysis_bundle.get("project_analysis", ""),
             "innovation_suggestions": analysis_bundle.get("innovation_suggestions", []),
+            "stars": stars,
+            "stargazers_count": stars,
+            "forks": forks,
+            "forks_count": forks,
+            "version": project.get("version"),
+            "weekly_downloads": project.get("weekly_downloads"),
+            "last_update": project.get("updated_at") or project.get("last_update"),
         }
 
     if results:
@@ -512,104 +531,49 @@ def _build_success_response(state: RecommendationState) -> RecommendationState:
     return response
 
 
-def _compile_intent_worker():
-    """意图 Worker：归一化 + 需求分析（原 normalize_input → llm_analyze）。"""
-    g = StateGraph(RecommendationState)
-    g.add_node("normalize_input", _normalize_input)
-    g.add_node("llm_analyze", _llm_analyze)
-    g.add_edge(START, "normalize_input")
-    g.add_edge("normalize_input", "llm_analyze")
-    g.add_edge("llm_analyze", END)
-    return g.compile()
+def apply_phase_prepare(state: RecommendationState) -> None:
+    """原地更新：预处理 + 安全校验。"""
+    state.update(_prepare_input(state))
+    state.update(_safety_check(state))
 
 
-def _compile_search_worker():
-    """搜索 Worker：多路召回 GitHub / 条件 PyPI（原 search_projects）。"""
-    g = StateGraph(RecommendationState)
-    g.add_node("search_projects", _search_projects)
-    g.add_edge(START, "search_projects")
-    g.add_edge("search_projects", END)
-    return g.compile()
+def apply_phase_intent(state: RecommendationState) -> None:
+    """原地更新：归一化 + 需求分析。"""
+    if state.get("blocked"):
+        return
+    state.update(_normalize_input(state))
+    state.update(_llm_analyze(state))
 
 
-def _compile_filter_worker():
-    """过滤 Worker：语义相似度筛选（原 tag_and_filter）。"""
-    g = StateGraph(RecommendationState)
-    g.add_node("tag_and_filter", _tag_and_filter)
-    g.add_edge(START, "tag_and_filter")
-    g.add_edge("tag_and_filter", END)
-    return g.compile()
+def apply_phase_search(state: RecommendationState) -> None:
+    """原地更新：检索项目。"""
+    if state.get("blocked"):
+        return
+    if not state.get("search_query"):
+        state["search_query"] = normalize_text(state.get("user_need", ""))[:256]
+    state.update(_search_projects(state))
 
 
-def _compile_evaluate_worker():
-    """评估 Worker：多维度打分（原 evaluate_projects）。"""
-    g = StateGraph(RecommendationState)
-    g.add_node("evaluate_projects", _evaluate_projects)
-    g.add_edge(START, "evaluate_projects")
-    g.add_edge("evaluate_projects", END)
-    return g.compile()
+def apply_phase_filter(state: RecommendationState) -> None:
+    """原地更新：语义过滤。"""
+    if state.get("blocked"):
+        return
+    state.update(_tag_and_filter(state))
 
 
-def _compile_report_worker():
-    """报告 Worker：摘要 + 项目分析与二创建议（原 build_success_response）。"""
-    g = StateGraph(RecommendationState)
-    g.add_node("build_success_response", _build_success_response)
-    g.add_edge(START, "build_success_response")
-    g.add_edge("build_success_response", END)
-    return g.compile()
+def apply_phase_evaluate(state: RecommendationState) -> None:
+    """原地更新：多维度评估。"""
+    if state.get("blocked"):
+        return
+    state.update(_evaluate_projects(state))
 
 
-@lru_cache(maxsize=1)
-def get_recommendation_graph():
-    """
-    推荐主图（方案 B：Supervisor 式流水线 + Worker 子图）。
-
-    各阶段拆成独立编译子图（intent / search / filter / evaluate / report），
-    主图做确定性路由，行为与原先单图串联一致。
-
-    说明：`langgraph_supervisor.create_supervisor` 依赖 LangChain ChatModel 与
-    messages 状态；当前栈为 HTTP LLM + RecommendationState。若需 LLM 动态路由，
-    可在此主图前接入 supervisor，或为本状态增加 messages 适配层。
-    """
-    intent_worker = _compile_intent_worker()
-    search_worker = _compile_search_worker()
-    filter_worker = _compile_filter_worker()
-    evaluate_worker = _compile_evaluate_worker()
-    report_worker = _compile_report_worker()
-
-    workflow = StateGraph(RecommendationState)
-    workflow.add_node("prepare_input", _prepare_input)
-    workflow.add_node("safety_check", _safety_check)
-    workflow.add_node("intent_worker", intent_worker)
-    workflow.add_node("search_worker", search_worker)
-    workflow.add_node("filter_worker", filter_worker)
-    workflow.add_node("evaluate_worker", evaluate_worker)
-    workflow.add_node("blocked_response", _blocked_response)
-    workflow.add_node("build_empty_response", _build_empty_response)
-    workflow.add_node("report_worker", report_worker)
-
-    workflow.add_edge(START, "prepare_input")
-    workflow.add_edge("prepare_input", "safety_check")
-    workflow.add_conditional_edges(
-        "safety_check",
-        _route_after_safety,
-        {
-            "blocked_response": "blocked_response",
-            "intent_worker": "intent_worker",
-        },
-    )
-    workflow.add_edge("intent_worker", "search_worker")
-    workflow.add_edge("search_worker", "filter_worker")
-    workflow.add_edge("filter_worker", "evaluate_worker")
-    workflow.add_conditional_edges(
-        "evaluate_worker",
-        _route_after_evaluate,
-        {
-            "build_success_response": "report_worker",
-            "build_empty_response": "build_empty_response",
-        },
-    )
-    workflow.add_edge("blocked_response", END)
-    workflow.add_edge("build_empty_response", END)
-    workflow.add_edge("report_worker", END)
-    return workflow.compile()
+def apply_phase_finalize(state: RecommendationState) -> None:
+    """原地更新：组装 final_response（拦截 / 空结果 / 成功）。"""
+    if state.get("blocked"):
+        state.update(_blocked_response(state))
+        return
+    if not state.get("results"):
+        state.update(_build_empty_response(state))
+    else:
+        state.update(_build_success_response(state))

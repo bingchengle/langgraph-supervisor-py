@@ -31,7 +31,7 @@ class APITools:
 
     @staticmethod
     def search_github_repos(query: str, limit: int = 10, sort: str = "relevance") -> List[Dict]:
-        """兼容 simple_app 的 GitHub 搜索接口。"""
+        """便捷封装：按条数限制搜索 GitHub 仓库。"""
         return APITools.search_github_repositories(
             query=query, sort=sort, order="desc", per_page=limit
         )
@@ -190,7 +190,7 @@ class APITools:
 
     @staticmethod
     def check_vulnerabilities(package_name: str, version: str | None = None) -> Dict:
-        """兼容 simple_app 的漏洞接口。"""
+        """查询 OSV 漏洞并包装为统一结构。"""
         vulns = APITools.check_osv_vulnerabilities(
             package=package_name,
             version=version or "",

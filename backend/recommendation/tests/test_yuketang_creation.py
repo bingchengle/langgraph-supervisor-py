@@ -4,7 +4,12 @@
 测试雨课堂二创项目推荐
 """
 
-from simple_app import analyze_user_need
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from recommendation.entrypoints import analyze_user_need
 
 # 测试用例
 test_case = "推荐几个针对雨课堂进行二创的项目"

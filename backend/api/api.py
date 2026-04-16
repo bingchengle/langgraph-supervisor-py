@@ -17,7 +17,7 @@ from fastapi.responses import Response
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.simple_app import analyze_user_need
+from recommendation.entrypoints import analyze_user_need
 
 app = FastAPI()
 

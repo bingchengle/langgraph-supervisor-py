@@ -5,12 +5,11 @@
 """
 
 import sys
-import os
+from pathlib import Path
 
-# 添加当前目录到Python路径
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from simple_app import analyze_user_need
+from recommendation.entrypoints import analyze_user_need
 
 if __name__ == "__main__":
     # 测试纯中文输入：推荐轻量级的数据库工具

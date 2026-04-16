@@ -1,284 +1,176 @@
 # 开源项目智能选型助手
 
-基于 LangGraph 多智能体架构的开源项目智能推荐系统，通过 LLM 语义理解 + 自动关键词提取 + GitHub/PyPI 搜索，实现精准的开源项目推荐。
+基于 **Supervisor 多专家流水线** 与 **LLM 动态加权** 的开源项目推荐系统：理解自然语言需求，在 GitHub / PyPI 等渠道检索候选库，多维度打分排序，并在 Web 端展示需求分析、权重与项目报告。
 
-## 项目简介
+---
 
-「开源项目智能选型助手」是一个基于多智能体架构的智能推荐系统，旨在帮助开发者快速找到适合其需求的开源项目。系统通过大语言模型理解用户的自然语言需求，自动提取关键词，然后在 GitHub 和 PyPI 上搜索相关项目，最后进行多维度评估并给出推荐结果。
+## 界面预览
+
+<p align="center">
+  <img src="docs/images/ui-hero.png" alt="首页：需求输入与快捷提问" width="720" />
+  <br />
+  <em>首页：品牌标识、需求输入与快捷提问</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/ui-recommendation.png" alt="推荐结果：需求分析与维度权重" width="720" />
+  <br />
+  <em>推荐结果：需求摘要、要点拆解与评估维度权重（柱状图）</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/ui-project-report.png" alt="单个项目的多维度得分与分析" width="720" />
+  <br />
+  <em>单个项目：各维度得分、项目分析与二创建议</em>
+</p>
+
+---
 
 ## 解决的痛点
 
-- **盲目选库**：不再依赖主观判断，系统基于客观分析推荐项目
-- **只看 Star**：不仅关注项目热度，还考虑成熟度、生态、风险等多个维度
-- **新手推荐不准**：针对新手友好度进行评估，为不同水平的开发者推荐合适的项目
-- **垂直场景搜不到**：支持插件、二次开发、业务工具等垂直场景的项目推荐
+- **选型主观**：用结构化评估与加权总分辅助决策，而不是只看 Star。
+- **需求说不清**：LLM 将自然语言转为检索意图与维度权重，适配不同场景（新手友好、PDF 问答、框架对比等）。
+- **垂直场景难搜**：在通用检索之上做语义过滤与多专家打分，覆盖插件、二次开发等需求。
 
-## 核心功能
+---
 
-- **自然语言理解**：支持用户使用自然语言描述需求
-- **智能关键词提取**：自动从用户需求中提取核心关键词
-- **多源搜索**：同时搜索 GitHub 和 PyPI 上的项目
-- **多维度评估**：从流行度、成熟度、生态、风险、上手难度、性能、体积、文档友好度等多个维度评估项目
-- **智能推荐**：基于评估结果给出最适合用户需求的项目推荐
-- **支持垂直场景**：特别支持插件、二次开发、业务工具等垂直场景的需求
+## 核心能力
 
-## 项目架构与起源说明
+- **自然语言需求分析**：关键词、检索查询、任务理解与维度权重。
+- **多源检索**：GitHub 为主，条件触发时补充 PyPI 等渠道（实现见 `recommendation/phases.py` 与 `core/platform_apis.py`）。
+- **多维度评估**：流行度、成熟度、生态、风险、场景匹配、趋势等（专家 Agent 见 `agents/experts/`）。
+- **动态加权总分**：推荐排序使用 LLM 给出的权重与维度得分加权（见 `recommendation/phases.py`）。
+- **前端**：Vue 3 + Element Plus + ECharts；支持导出 PDF / Markdown、需求修正与结果展示。
 
-本项目基于 **langgraph-supervisor-py** 多智能体项目扩展而来，保留了原有的 Supervisor 调度 + 多 Agent 分工协作的核心架构，在此基础上重新实现了完整的业务逻辑，包括需求理解、关键词提取、开源库搜索、多维度评估、推荐排序等功能。
+---
 
-项目在原有架构基础上进行了以下扩展：
-- **通用语义理解**：支持任意领域的自然语言需求分析，不再局限于特定技术领域
-- **动态加权**：根据用户需求自动调整评估维度权重，提高推荐准确性
-- **垂直场景搜索**：特别支持插件、二次开发、业务工具等垂直场景的需求
-- **前端展示**：提供直观的项目推荐结果展示界面
+## 项目结构（当前仓库）
 
-## 系统架构
-
-### 多智能体流程
-
-1. **需求理解智能体**：分析用户输入的自然语言需求，提取核心关键词和搜索查询
-2. **搜索智能体**：使用提取的搜索查询在 GitHub 和 PyPI 上搜索相关项目
-3. **评估智能体**：对搜索到的项目进行多维度评估，包含6个专业评估Agent：
-   - **流行度评估Agent**：评估项目的Star、Fork、Watch等指标
-   - **成熟度评估Agent**：评估项目的版本号、创建时间等指标
-   - **生态评估Agent**：评估项目的贡献者数量、文档、许可证等指标
-   - **风险评估Agent**：评估项目的安全漏洞、更新频率等指标
-   - **场景匹配Agent**：评估项目与用户需求的匹配度
-   - **趋势评估Agent**：评估项目的活跃度和增长趋势
-4. **推荐智能体**：基于评估结果生成推荐报告
-
-### 系统流程图
-
+```text
+GitHub-Catcher-Agent/
+├── backend/
+│   ├── api/
+│   │   └── api.py                 # FastAPI：POST /api/recommend、GET /api/health
+│   ├── agents/
+│   │   ├── evaluators.py
+│   │   └── experts/               # 流行度、成熟度、生态、风险、场景、趋势等专家
+│   ├── core/
+│   │   ├── llm_client.py          # LLM 调用与提示逻辑
+│   │   ├── config.py
+│   │   ├── platform_apis.py       # GitHub / PyPI 等平台 API
+│   │   └── security.py            # 输入规范化与安全策略
+│   ├── langgraph_supervisor/      # Supervisor 编排（上游能力封装）
+│   ├── recommendation/
+│   │   ├── entrypoints.py         # analyze_user_need：对外统一入口
+│   │   ├── supervisor.py        # Supervisor + 多专家 Handoff 流水线
+│   │   ├── phases.py              # 准备、意图、搜索、过滤、评估、收尾等阶段
+│   │   ├── context.py / state.py / chat_model.py
+│   │   └── tests/
+│   └── tools.py
+├── frontend/
+│   ├── src/
+│   │   ├── App.vue                # 主界面与图表
+│   │   └── components/
+│   │       └── LogoYuFish.vue     # 品牌图形（YU 鱼形标志）
+│   ├── index.html
+│   └── package.json
+├── docs/
+│   └── images/                    # README 界面截图
+├── Makefile                       # 测试与 lint（pytest / ruff 等）
+├── pyproject.toml
+├── uv.lock
+└── README.md
 ```
-┌───────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-│ 用户输入  │────>│ 需求理解智能体     │────>│ 搜索智能体         │
-└───────────┘     │ (语义理解+关键词提取)│     │ (GitHub+PyPI搜索) │
-                  └─────────────────────┘     └─────────────────────┘
-                                                      │
-                                                      ▼
-┌───────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-│ 推荐结果  │<────│ 推荐智能体         │<────│ 评估智能体         │
-└───────────┘     │ (生成推荐报告)     │     │ (多维度评估)       │
-                  └─────────────────────┘     └─────────────────────┘
-                                                      │
-                                                      ▼
-                                   ┌─────────────────────────────────┐
-                                   │ 6个专业评估Agent                │
-                                   │ ┌─────────────────────────────┐ │
-                                   │ │ 流行度评估Agent              │ │
-                                   │ │ 成熟度评估Agent              │ │
-                                   │ │ 生态评估Agent                │ │
-                                   │ │ 风险评估Agent                │ │
-                                   │ │ 场景匹配Agent                │ │
-                                   │ │ 趋势评估Agent                │ │
-                                   │ └─────────────────────────────┘ │
-                                   └─────────────────────────────────┘
-```
+
+---
+
+## 架构说明
+
+调度层使用 **langgraph_supervisor** 的 `create_supervisor`，将任务按顺序交给多位「专家」：准备与安全校验 → 意图与权重 → 检索 → 过滤 → 多维度评估 → 报告与排序。各阶段具体逻辑集中在 **`recommendation/phases.py`**，会话状态在 **`recommendation/context.py`** 中维护。
+
+与「仅一条 LangGraph 状态机图」不同，本仓库以 **Supervisor + 分阶段函数** 组织业务，便于单独测试检索、缓存与加权排序等行为。
+
+---
 
 ## 技术栈
 
-- **后端**：Python 3.8+
-- **Web 框架**：FastAPI
-- **大语言模型**：支持多种模型（qwen-turbo, kimi, glm, deepseek）
-- **搜索 API**：GitHub API, PyPI API
-- **架构**：LangGraph 多智能体架构
-- **其他库**：requests, json, concurrent.futures
+| 层级 | 技术 |
+|------|------|
+| 后端 | Python 3.10+、FastAPI、Uvicorn |
+| 编排与 Agent | LangGraph、LangChain Core、langgraph_supervisor |
+| 模型 | 兼容 OpenAI 式 API（通过环境变量配置基址与密钥） |
+| 数据与检索 | GitHub API、PyPI（按需） |
+| 前端 | Vue 3、Vite、Element Plus、ECharts、Axios |
 
-## 快速启动
+---
 
-### 环境准备
+## 快速开始
 
-1. 确保已安装 Python 3.8+
-2. 安装依赖包：
+### 1. 后端
 
-```bash
-pip install fastapi uvicorn requests
-```
-
-### 配置
-
-1. 通过环境变量配置模型服务（避免在代码中硬编码密钥）：
+安装运行 API 所需依赖（示例）：
 
 ```bash
-$env:MODEL_API_KEY="your_api_key_here"
-$env:MODEL_API_URL="https://fast.poloai.top"
-# 可选：覆盖候选模型列表（逗号分隔）
-$env:MODEL_CANDIDATES="qwen-turbo,kimi,glm,deepseek"
+pip install fastapi uvicorn requests langgraph langchain-core langchain-openai
 ```
 
-### 启动服务
+在仓库根目录或 `backend` 下将 `backend` 加入模块搜索路径后启动（以下示例在 **`backend` 目录** 执行）：
 
 ```bash
-# 设置环境变量确保中文显示正常
-$env:PYTHONIOENCODING='utf-8'; $env:LANG='zh_CN.UTF-8'; $env:LC_ALL='zh_CN.UTF-8'; python api.py
+cd backend
+export PYTHONIOENCODING=utf-8
+export MODEL_API_KEY="你的_API_Key"
+export MODEL_API_URL="https://你的模型网关地址"
+python api/api.py
 ```
 
-服务将在 `http://0.0.0.0:8004` 上运行。
+（Windows PowerShell 可使用 `$env:MODEL_API_KEY="..."` 等形式设置环境变量。）
 
-## 使用示例
+默认监听 **`http://0.0.0.0:8004`**。健康检查：`GET http://127.0.0.1:8004/api/health`。
 
-### 示例 1：推荐雨课堂二次开发项目
+推荐接口示例：
 
-**输入**：
-```json
-{
-  "user_need": "推荐雨课堂二次开发项目"
-}
+```bash
+curl -X POST "http://127.0.0.1:8004/api/recommend" \
+  -H "Content-Type: application/json" \
+  -d "{\"user_need\": \"给我推荐适合新手的 Agent 项目\"}"
 ```
 
-**输出**：
-```json
-{
-  "user_need": "推荐雨课堂二次开发项目",
-  "llm_result": {
-    "key_requirements": ["雨课堂", "二次开发", "插件", "开源项目"],
-    "dimensions_needed": ["流行度", "成熟度", "生态", "风险", "上手难度", "性能", "体积", "文档友好度"],
-    "weights": {
-      "流行度": 0.14285714285714288,
-      "成熟度": 0.19047619047619052,
-      "生态": 0.14285714285714288,
-      "风险": 0.09523809523809526,
-      "上手难度": 0.09523809523809526,
-      "性能": 0.09523809523809526,
-      "体积": 0.09523809523809526,
-      "文档友好度": 0.14285714285714288
-    },
-    "intent": {
-      "core_keywords": ["雨课堂", "二次开发", "插件", "开源项目"],
-      "search_query": "推荐雨课堂二次开发项目"
-    }
-  },
-  "projects": [],
-  "message": "未找到匹配的开源项目"
-}
+### 2. 前端
+
+```bash
+cd frontend
+npm install
+npm run dev
 ```
 
-### 示例 2：推荐前端项目
+开发服务器默认由 Vite 指定端口（见终端输出）。前端通过环境变量 **`VITE_API_BASE_URL`** 指向后端，未设置时默认为 **`http://127.0.0.1:8004`**。
 
-**输入**：
-```json
-{
-  "user_need": "推荐前端项目"
-}
+生产构建：
+
+```bash
+npm run build
 ```
 
-**输出**：
-```json
-{
-  "user_need": "推荐前端项目",
-  "llm_result": {
-    "key_requirements": ["前端", "web", "javascript", "前端开发"],
-    "dimensions_needed": ["流行度", "成熟度", "生态", "风险", "上手难度", "性能", "体积", "文档友好度"],
-    "weights": {
-      "流行度": 0.15,
-      "成熟度": 0.15,
-      "生态": 0.2,
-      "风险": 0.1,
-      "上手难度": 0.1,
-      "性能": 0.1,
-      "体积": 0.1,
-      "文档友好度": 0.1
-    },
-    "intent": {
-      "core_keywords": ["前端", "web", "javascript", "前端开发"],
-      "search_query": "推荐前端项目"
-    }
-  },
-  "projects": [
-    {
-      "name": "MallChatWeb",
-      "description": "mallchat的前端项目，是一个既能购物又能聊天的电商系统。以企业级开发规范的要求来实现它，电商该有的购物车，订单，支付，推荐，搜索，更新，绩效，通知，物流，客服，全功能应有尽有。持续更新ing",
-      "html_url": "https://github.com/Evansy/MallChatWeb",
-      "total_score": 0.66,
-      "dimension_scores": {
-        "流行度": 0.4,
-        "成熟度": 0.6000000000000001,
-        "生态": 0.7,
-        "风险": 1.0,
-        "上手难度": 1.0,
-        "性能": 0.2
-      }
-    },
-    // 更多项目...
-  ]
-}
+### 3. 测试与代码质量（可选）
+
+```bash
+make test
+make lint
 ```
 
-### 示例 3：推荐 agent 项目
+---
 
-**输入**：
-```json
-{
-  "user_need": "推荐agent项目"
-}
-```
+## 配置说明
 
-**输出**：
-```json
-{
-  "user_need": "推荐agent项目",
-  "llm_result": {
-    "key_requirements": ["agent", "智能体", "AI 助手", "代理"],
-    "dimensions_needed": ["流行度", "成熟度", "生态", "风险", "上手难度", "性能", "体积", "文档友好度"],
-    "weights": {
-      "流行度": 0.13636363636363638,
-      "成熟度": 0.18181818181818185,
-      "生态": 0.13636363636363638,
-      "风险": 0.09090909090909093,
-      "上手难度": 0.09090909090909093,
-      "性能": 0.13636363636363638,
-      "体积": 0.09090909090909093,
-      "文档友好度": 0.13636363636363638
-    },
-    "intent": {
-      "core_keywords": ["agent", "智能体", "AI 助手", "代理"],
-      "search_query": "agent项目"
-    }
-  },
-  "projects": [
-    {
-      "name": "agent-dev",
-      "description": "《大模型项目实战：Agent开发与应用》配套资源",
-      "html_url": "https://github.com/little51/agent-dev",
-      "total_score": 0.5873145800396757,
-      "dimension_scores": {
-        "流行度": 0.4,
-        "成熟度": 0.43657290019837813,
-        "生态": 0.5,
-        "风险": 1.0,
-        "上手难度": 1.0,
-        "性能": 0.2
-      }
-    },
-    // 更多项目...
-  ]
-}
-```
+| 变量 | 含义 |
+|------|------|
+| `MODEL_API_KEY` | 大模型 API 密钥 |
+| `MODEL_API_URL` | 大模型 API 基址（OpenAI 兼容） |
+| `MODEL_CANDIDATES` | 可选，逗号分隔的候选模型名 |
+| `PYTHONIOENCODING` | 建议设为 `utf-8`，避免 Windows 控制台中文乱码 |
 
-## 注意事项
-
-1. **API Key**：请通过环境变量 `MODEL_API_KEY` 配置；默认 API 地址为 `https://fast.poloai.top`
-2. **编码问题**：已在系统中设置 `PYTHONIOENCODING=utf-8`，确保中文显示正常
-3. **国内可运行**：使用国内 API 服务，无需科学上网即可运行
-4. **搜索限制**：GitHub API 对查询长度有限制，系统会自动截断过长的搜索查询
-5. **网络依赖**：需要网络连接以访问 GitHub API、PyPI API 和大语言模型 API
-
-## 项目亮点
-
-1. **多智能体架构**：基于 LangGraph 多智能体架构，各智能体分工明确，协作高效
-2. **语义理解**：使用大语言模型理解用户需求，支持自然语言输入
-3. **智能搜索**：自动提取关键词，在 GitHub 和 PyPI 上搜索相关项目
-4. **多维度评估**：从多个维度评估项目，确保推荐的项目符合用户需求
-5. **垂直场景支持**：特别支持插件、二次开发、业务工具等垂直场景的需求
-6. **开源免费**：完全开源，可自由使用和修改
-7. **易于部署**：提供简洁的快速启动步骤，易于部署和使用
-
-## 适用场景
-
-- **毕设项目**：适合作为计算机相关专业的毕业设计项目
-- **竞赛项目**：可用于各类编程竞赛和创新大赛
-- **个人项目**：适合开发者个人使用，帮助快速找到适合的开源项目
-- **企业内部工具**：可集成到企业内部开发流程中，帮助团队选择合适的开源项目
+---
 
 ## 许可证
 

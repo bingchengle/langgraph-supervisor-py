@@ -1,4 +1,9 @@
-from simple_app import APITools
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from core.platform_apis import APITools
 
 # 测试GitHub搜索
 print("测试GitHub搜索...")

@@ -1,19 +1,21 @@
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted } from 'vue'
 import axios from 'axios'
 import * as echarts from 'echarts'
+import LogoYuFish from './components/LogoYuFish.vue'
 import { 
   ElButton, ElInput, ElLoading, ElMessage, ElCard, ElTag, 
   ElProgress, ElDivider, ElSelect, ElOption, ElTooltip, 
   ElBadge, ElIcon, ElPopconfirm, ElScrollbar
 } from 'element-plus'
-import { Star, Download, Top, Edit, Check, Link, Calendar, Document } from '@element-plus/icons-vue'
+import { Star, Download, Top, Edit, Check, Link, Document, Clock } from '@element-plus/icons-vue'
 
 // 响应式数据
 const userNeed = ref('')
 const loading = ref(false)
 const recommendationResult = ref(null)
-const activeDimension = ref('total')
+let weightsBarChartInstance = null
+let weightsBarResizeHandler = null
 const showBackToTop = ref(false)
 const favorites = ref([])
 const history = ref([])
@@ -28,23 +30,42 @@ const hotQuestions = [
   '我应该选LangChain还是LlamaIndex？'
 ]
 
-// 推荐等级配色
-const recommendColors = {
-  0: '#67C23A', // 推荐 - 绿色
-  1: '#409EFF', // 次推荐 - 蓝色
-  2: '#909399'  // 备选 - 灰色
+// 各评估维度的固定释义（面向使用者：说明「是什么、看什么」；得分一般为 0–1，越高越好）
+const dimensionDefinitions = {
+  流行度:
+    '社区热度与采用广度：综合 Star、Fork、关注者、下载与检索热度等，越高表示越常被使用与讨论。',
+  成熟度:
+    '工程化与可依赖程度：综合版本号、发布节奏、维护年限与 issue 处理等，越高表示越适合长期依赖。',
+  生态:
+    '周边工具与集成丰富度：插件、扩展、上下游集成与第三方示例多少，越高表示扩展与对接越容易。',
+  风险:
+    '安全与合规风险（分数越高表示风险越低）：综合漏洞信息、许可证、依赖健康与更新及时性等。',
+  上手难度:
+    '学习与接入成本（分数越高表示越容易上手）：综合文档、示例、API 复杂度与社区答疑等。',
+  性能:
+    '运行效率与资源占用：在典型场景下的响应速度、吞吐与开销表现，越高表示越省资源或越快。',
+  体积:
+    '安装与依赖体量：安装包大小、依赖数量与冷启动成本等，越高表示越轻量（在可比场景下）。',
+  文档友好度:
+    '文档与教程质量：是否易查、示例是否够用、中英文与检索体验等，越高表示越省学习成本。',
+  场景匹配:
+    '与当前需求场景的贴合度：名称、描述与标签是否命中你的使用场景与关键词。',
+  趋势:
+    '近期活跃度与增长：提交频率、发版节奏与社区讨论趋势，越高表示越在积极演进。',
 }
 
-// 维度定义
-const dimensionDefinitions = {
-  '流行度': '项目的受欢迎程度，基于Star数、下载量等指标',
-  '成熟度': '项目的稳定程度，基于版本历史、维护频率等指标',
-  '生态': '项目的生态系统丰富程度，基于插件、扩展等指标',
-  '风险': '项目的风险程度，基于安全漏洞、依赖等指标',
-  '上手难度': '项目的学习曲线陡峭程度，基于文档、示例等指标',
-  '性能': '项目的运行效率，基于速度、资源占用等指标',
-  '体积': '项目的大小，基于安装包大小、依赖数量等指标',
-  '文档友好度': '项目文档的质量和完整性'
+/** 维度标准含义（悬停工具提示） */
+function dimensionDefinitionText(dim) {
+  return dimensionDefinitions[dim] || `「${dim}」用于从该侧面比较候选项目；分数一般在 0–1 之间，越高越好（若另有说明以工具提示为准）。`
+}
+
+/** 项目卡片内短释义（完整释义见悬停） */
+function dimensionDefinitionShort(dim) {
+  const full = dimensionDefinitionText(dim)
+  if (full.length <= 64) {
+    return full
+  }
+  return `${full.slice(0, 62).replace(/[，、；：]$/, '')}…`
 }
 
 // 推荐项目
@@ -100,196 +121,86 @@ const recommendProjects = async () => {
   }
 }
 
-// 渲染图表
+// 渲染图表（当前仅：评估维度与权重 — 单张柱状图）
 const renderCharts = () => {
-  if (!recommendationResult.value || !recommendationResult.value.projects || recommendationResult.value.projects.length === 0) {
+  if (!recommendationResult.value?.llm_result?.weights) {
     return
   }
-  
-  // 渲染项目对比柱状图
-  renderComparisonChart()
-  
-  // 渲染雷达图（3项目对比）
-  renderRadarChart()
+  renderWeightsBarChart()
 }
 
-// 渲染项目对比柱状图
-const renderComparisonChart = () => {
-  const comparisonChartDom = document.getElementById('comparison-chart')
-  if (comparisonChartDom) {
-    const myChart = echarts.init(comparisonChartDom)
-    
-    const projectNames = recommendationResult.value.projects.map(p => p.name)
-    let scores
-    
-    if (activeDimension.value === 'total') {
-      scores = recommendationResult.value.projects.map(p => p.total_score)
-    } else {
-      scores = recommendationResult.value.projects.map(p => p.dimension_scores[activeDimension.value] || 0)
-    }
-    
-    const option = {
-      title: {
-        text: activeDimension.value === 'total' ? '项目总分对比' : `${activeDimension.value}维度对比`,
-        left: 'center'
+const renderWeightsBarChart = () => {
+  const el = document.getElementById('weights-bar-chart')
+  if (!el || !recommendationResult.value?.llm_result?.weights) {
+    return
+  }
+  if (weightsBarChartInstance) {
+    weightsBarChartInstance.dispose()
+    weightsBarChartInstance = null
+  }
+  const weights = recommendationResult.value.llm_result.weights
+  const dimensions = Object.keys(weights)
+  const data = dimensions.map((d) => Number((weights[d] * 100).toFixed(2)))
+
+  weightsBarChartInstance = echarts.init(el)
+  weightsBarChartInstance.setOption({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params) => {
+        const p = params[0]
+        return `${p.name}<br/>权重：${p.value}%`
       },
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: {
-          type: 'shadow'
-        },
-        formatter: function(params) {
-          const index = params[0].dataIndex
-          const project = recommendationResult.value.projects[index]
-          if (activeDimension.value === 'total') {
-            const parsed = parseProjectData(project)
-            return `${project.name}<br/>总分: ${parsed.totalScore.display}<br/>${parsed.totalScore.explanation}`
-          } else {
-            const parsed = parseProjectData(project)
-            const dimScore = parsed.dimensionScores[activeDimension.value]
-            return `${project.name}<br/>${activeDimension.value}: ${dimScore.display}<br/>${dimScore.explanation}`
-          }
-        }
+    },
+    grid: { left: '3%', right: '4%', bottom: dimensions.length > 8 ? '18%' : '10%', top: 24, containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: dimensions,
+      axisLabel: {
+        rotate: dimensions.length > 6 ? 28 : 0,
+        interval: 0,
+        color: '#606266',
       },
-      xAxis: {
-        type: 'category',
-        data: projectNames
-      },
-      yAxis: {
-        type: 'value',
-        max: 1,
-        axisLabel: {
-          formatter: '{value}'
-        }
-      },
-      series: [{
-        data: scores.map((score, index) => ({
-          value: score,
-          itemStyle: {
-            color: recommendColors[index] || '#909399'
-          }
-        })),
+    },
+    yAxis: {
+      type: 'value',
+      max: 100,
+      axisLabel: { formatter: '{value}%' },
+      splitLine: { lineStyle: { type: 'dashed', opacity: 0.6 } },
+    },
+    series: [
+      {
+        name: '权重',
         type: 'bar',
+        barMaxWidth: 48,
+        data,
+        itemStyle: {
+          borderRadius: [6, 6, 0, 0],
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: '#7c8ef5' },
+            { offset: 1, color: '#5b4b9a' },
+          ]),
+        },
         label: {
           show: true,
           position: 'top',
-          formatter: function(params) {
-            const index = params.dataIndex
-            return `${index + 1}. ${params.data.toFixed(3)}`
-          }
-        }
-      }]
-    }
-    
-    myChart.setOption(option)
-    
-    // 响应式调整
-    window.addEventListener('resize', () => {
-      myChart.resize()
-    })
+          formatter: '{c}%',
+          color: '#303133',
+          fontSize: 12,
+        },
+      },
+    ],
+  })
+
+  if (weightsBarResizeHandler) {
+    window.removeEventListener('resize', weightsBarResizeHandler)
   }
+  weightsBarResizeHandler = () => weightsBarChartInstance?.resize()
+  window.addEventListener('resize', weightsBarResizeHandler)
 }
 
-// 渲染雷达图（3项目对比）
-const renderRadarChart = () => {
-  const radarChartDom = document.getElementById('radar-chart')
-  if (radarChartDom) {
-    const myChart = echarts.init(radarChartDom)
-    
-    const dimensions = Object.keys(recommendationResult.value.projects[0].dimension_scores)
-    const series = recommendationResult.value.projects.map((project, index) => ({
-      name: project.name,
-      type: 'radar',
-      data: [{
-        value: Object.values(project.dimension_scores),
-        name: project.name,
-        itemStyle: {
-          color: recommendColors[index] || '#909399'
-        }
-      }]
-    }))
-    
-    const option = {
-      title: {
-        text: '项目维度对比',
-        left: 'center'
-      },
-      tooltip: {
-        formatter: function(params) {
-          const projectName = params[0].name
-          const project = recommendationResult.value.projects.find(p => p.name === projectName)
-          const parsed = parseProjectData(project)
-          let html = `<div><strong>${projectName}</strong></div>`
-          params.forEach(param => {
-            const dim = param.name
-            const score = param.value
-            const dimScore = parsed.dimensionScores[dim]
-            html += `<div>${dim}: ${dimScore.display} (${dimScore.explanation})</div>`
-          })
-          return html
-        }
-      },
-      legend: {
-        data: recommendationResult.value.projects.map(p => p.name),
-        bottom: 0
-      },
-      radar: {
-        indicator: dimensions.map(dim => ({
-          name: dim,
-          max: 1
-        }))
-      },
-      series: series
-    }
-    
-    myChart.setOption(option)
-    
-    // 响应式调整
-    window.addEventListener('resize', () => {
-      myChart.resize()
-    })
-  }
-}
-
-// 解析项目核心数据
+// 解析项目核心数据（展示层不再包含 Star/下载/版本等易缺失字段）
 const parseProjectData = (project) => {
-  // 解析Star数
-  const parseStars = (stars) => {
-    if (!stars) return { display: '0', explanation: '暂无Star数据' }
-    if (stars >= 10000) {
-      return { display: `${(stars / 10000).toFixed(1)}k`, explanation: '行业顶级热度，社区活跃' }
-    } else if (stars >= 1000) {
-      return { display: `${(stars / 1000).toFixed(1)}k`, explanation: '高热度项目，社区支持良好' }
-    } else {
-      return { display: stars.toString(), explanation: '新兴项目，有一定社区基础' }
-    }
-  }
-  
-  // 解析下载量
-  const parseDownloads = (downloads) => {
-    if (!downloads) return { display: '0', explanation: '暂无下载数据' }
-    if (downloads >= 1000000) {
-      return { display: `${(downloads / 1000000).toFixed(1)}M`, explanation: 'Python生态主流库' }
-    } else if (downloads >= 1000) {
-      return { display: `${(downloads / 1000).toFixed(1)}k`, explanation: '常用库，有稳定用户群' }
-    } else {
-      return { display: downloads.toString(), explanation: '小众库，适合特定场景' }
-    }
-  }
-  
-  // 解析版本号
-  const parseVersion = (version) => {
-    if (!version) return { display: '未知', explanation: '暂无版本信息' }
-    // 简单判断版本成熟度
-    const versionParts = version.replace('v', '').split('.')
-    const major = parseInt(versionParts[0]) || 0
-    if (major >= 1) {
-      return { display: version, explanation: '稳定版本，适合生产环境' }
-    } else {
-      return { display: version, explanation: '开发版本，功能可能不稳定' }
-    }
-  }
-  
   // 解析总分
   const parseTotalScore = (score) => {
     if (score >= 0.8) {
@@ -354,9 +265,6 @@ const parseProjectData = (project) => {
   }
   
   return {
-    stars: parseStars(project.stars),
-    weeklyDownloads: parseDownloads(project.weekly_downloads),
-    version: parseVersion(project.version),
     totalScore: parseTotalScore(project.total_score),
     dimensionScores: Object.fromEntries(
       Object.entries(project.dimension_scores).map(([dim, score]) => [dim, parseDimensionScore(dim, score)])
@@ -381,11 +289,6 @@ const sortedDimensions = (project) => {
         return weightB - weightA
       })
   )
-}
-
-// 处理维度切换
-const handleDimensionChange = () => {
-  renderComparisonChart()
 }
 
 // 填充热门提问
@@ -635,12 +538,13 @@ onMounted(async () => {
 <template>
   <div class="app">
     <header class="header">
+      <div class="header-backdrop" aria-hidden="true"></div>
       <div class="header-content">
-        <div class="logo">
-          <Star class="logo-icon" />
-          <h1>开源项目智能选型助手</h1>
+        <div class="brand-row">
+          <LogoYuFish class="brand-logo-mark" />
         </div>
-        <p>基于LLM驱动的动态加权推荐系统</p>
+        <h1 class="hero-title">开源项目智能选型助手</h1>
+        <p class="hero-subtitle">基于 LLM 的动态加权推荐</p>
       </div>
     </header>
     
@@ -649,7 +553,7 @@ onMounted(async () => {
         <el-card shadow="hover" class="input-card">
           <template #header>
             <div class="card-header">
-              <span>输入您的需求</span>
+              <span class="panel-title">输入您的需求</span>
             </div>
           </template>
           <div class="input-container">
@@ -689,7 +593,7 @@ onMounted(async () => {
         <el-card shadow="hover" class="result-card">
           <template #header>
             <div class="card-header">
-              <span>推荐结果</span>
+              <span class="panel-title">推荐结果</span>
               <div class="header-actions">
                 <el-button size="small" @click="exportReport('pdf')" class="action-button">
                   <Download /> 导出PDF
@@ -734,85 +638,16 @@ onMounted(async () => {
               </div>
             </div>
             
-            <p><strong>需求定位:</strong> {{ recommendationResult.llm_result.task_type }}</p>
-            <p><strong>关键需求点:</strong></p>
+            <p class="task-type-line">{{ recommendationResult.llm_result.task_type }}</p>
             <ul class="requirement-list">
-              <li v-for="(req, index) in recommendationResult.llm_result.key_requirements" :key="index" v-if="req">{{ req }}</li>
+              <template v-for="(req, index) in recommendationResult.llm_result.key_requirements" :key="index">
+                <li v-if="req">{{ req }}</li>
+              </template>
             </ul>
             
-            <!-- 评估维度与权重 -->
             <div class="weights-section">
-              <h4 class="subsection-title">评估维度与权重</h4>
-              <div class="weights-container">
-                <div 
-                  v-for="(weight, dimension) in recommendationResult.llm_result.weights" 
-                  :key="dimension" 
-                  class="weight-item"
-                >
-                  <el-tooltip :content="dimensionDefinitions[dimension]" placement="top">
-                    <span class="dimension">{{ dimension }}</span>
-                  </el-tooltip>
-                  <div class="weight-circle">
-                    <el-progress 
-                      type="circle" 
-                      :percentage="weight * 100" 
-                      :format="() => `${(weight * 100).toFixed(1)}%`"
-                      :stroke-width="8"
-                      :width="80"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            <!-- 权重说明 -->
-            <div class="weight-explanation">
-              <h4 class="subsection-title">权重说明</h4>
-              <ul class="explanation-list">
-                <li v-if="recommendationResult.llm_result.prefer_beginner_friendly">
-                  上手难度权重较高，因您需求为适合新手
-                </li>
-                <li v-if="recommendationResult.llm_result.prefer_mature_project">
-                  成熟度和风险权重较高，因您需求为稳定可靠
-                </li>
-                <li v-if="recommendationResult.llm_result.prefer_small_project">
-                  体积和性能权重较高，因您需求为轻量快速
-                </li>
-                <li>
-                  生态权重根据您对功能全面性的需求进行了调整
-                </li>
-              </ul>
-            </div>
-          </div>
-          
-          <el-divider></el-divider>
-          
-          <!-- 项目对比 -->
-          <div class="project-comparison">
-            <div class="comparison-header">
-              <h3 class="section-title">项目对比</h3>
-              <el-select 
-                v-model="activeDimension" 
-                @change="handleDimensionChange"
-                class="dimension-select"
-              >
-                <el-option value="total" label="总分"></el-option>
-                <el-option 
-                  v-for="(weight, dimension) in recommendationResult.llm_result.weights" 
-                  :key="dimension"
-                  :value="dimension"
-                  :label="dimension"
-                ></el-option>
-              </el-select>
-            </div>
-            <div id="comparison-chart" class="chart"></div>
-            <div class="chart-explanation">
-              <p>评分区间：0-1分，越高越好</p>
-              <div class="color-legend">
-                <span class="legend-item"><span class="color-box" style="background-color: #67C23A;"></span> 推荐</span>
-                <span class="legend-item"><span class="color-box" style="background-color: #409EFF;"></span> 次推荐</span>
-                <span class="legend-item"><span class="color-box" style="background-color: #909399;"></span> 备选</span>
-              </div>
+              <h4 class="content-heading">评估维度与权重</h4>
+              <div id="weights-bar-chart" class="chart chart-weights"></div>
             </div>
           </div>
           
@@ -886,15 +721,6 @@ onMounted(async () => {
                       <el-tooltip :content="parseProjectData(project).totalScore.explanation" placement="top">
                         <p><strong>总分:</strong> {{ parseProjectData(project).totalScore.display }}</p>
                       </el-tooltip>
-                      <el-tooltip :content="parseProjectData(project).stars.explanation" placement="top">
-                        <p><strong>Star数:</strong> {{ parseProjectData(project).stars.display }}</p>
-                      </el-tooltip>
-                      <el-tooltip :content="parseProjectData(project).weeklyDownloads.explanation" placement="top">
-                        <p><strong>周下载量:</strong> {{ parseProjectData(project).weeklyDownloads.display }}</p>
-                      </el-tooltip>
-                      <el-tooltip :content="parseProjectData(project).version.explanation" placement="top">
-                        <p><strong>最新版本:</strong> {{ parseProjectData(project).version.display }}</p>
-                      </el-tooltip>
                       <p v-if="project.forks"><strong>Fork数:</strong> {{ project.forks }}</p>
                       <p v-if="project.last_update"><strong>最后更新:</strong> {{ project.last_update }}</p>
                       <p v-if="project.monthly_downloads"><strong>月下载量:</strong> {{ project.monthly_downloads }}</p>
@@ -903,15 +729,33 @@ onMounted(async () => {
                   
                   <!-- 各维度得分 -->
                   <div class="dimension-scores">
-                    <h4 class="subsection-title">各维度得分:</h4>
+                    <h4 class="content-heading">各维度得分</h4>
+                    <p class="dimension-scores-lead">
+                      下表列出各评估维度；左侧为维度名称与<strong>标准含义</strong>，右侧条形图为该项目在该维度上的得分（0–1，一般越高越好）。可悬停维度名查看完整说明，悬停「得分含义」查看本条分数的解读。
+                    </p>
                     <div 
                       v-for="(score, dimension) in sortedDimensions(project)" 
                       :key="dimension" 
                       class="score-item"
                     >
-                      <el-tooltip :content="parseProjectData(project).dimensionScores[dimension].explanation" placement="top">
-                        <span class="dimension">{{ dimension }}:</span>
-                      </el-tooltip>
+                      <div class="dimension-col">
+                        <div class="dimension-label-row">
+                          <el-tooltip
+                            :content="dimensionDefinitionText(dimension)"
+                            placement="top"
+                            :show-after="300"
+                          >
+                            <span class="dimension">{{ dimension }}</span>
+                          </el-tooltip>
+                          <el-tooltip
+                            :content="parseProjectData(project).dimensionScores[dimension].explanation"
+                            placement="top"
+                          >
+                            <span class="score-hint">得分含义</span>
+                          </el-tooltip>
+                        </div>
+                        <p class="dimension-hint">{{ dimensionDefinitionShort(dimension) }}</p>
+                      </div>
                       <el-progress 
                         :percentage="score * 100" 
                         :format="() => parseProjectData(project).dimensionScores[dimension].display"
@@ -922,7 +766,7 @@ onMounted(async () => {
                   
                   <!-- 项目分析 -->
                   <div class="project-analysis">
-                    <h4 class="subsection-title">项目分析:</h4>
+                    <h4 class="content-heading">项目分析</h4>
                     <ul class="analysis-list">
                       <li v-for="(item, idx) in generateProjectAnalysis(project, index)" :key="idx">
                         {{ item }}
@@ -932,7 +776,7 @@ onMounted(async () => {
                   
                   <!-- 二创方向和建议 -->
                   <div class="project-suggestions">
-                    <h4 class="subsection-title">二创方向和建议:</h4>
+                    <h4 class="content-heading">二创方向和建议</h4>
                     <ul class="suggestions-list">
                       <li v-for="(item, idx) in generateProjectSuggestions(project, index)" :key="idx">
                         {{ item }}
@@ -943,12 +787,6 @@ onMounted(async () => {
               </el-card>
             </div>
           </div>
-          
-          <!-- 雷达图对比 -->
-          <div class="radar-section">
-            <h3 class="section-title">维度对比雷达图</h3>
-            <div id="radar-chart" class="chart"></div>
-          </div>
         </el-card>
       </section>
       
@@ -957,8 +795,8 @@ onMounted(async () => {
         <el-card shadow="hover">
           <template #header>
             <div class="card-header">
-              <span>历史记录</span>
-              <el-icon><Star /></el-icon>
+              <span class="panel-title">历史记录</span>
+              <el-icon class="panel-title-icon"><Clock /></el-icon>
             </div>
           </template>
           <el-scrollbar max-height="200px">
@@ -1012,7 +850,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-/* 全局样式 */
 * {
   margin: 0;
   padding: 0;
@@ -1020,57 +857,138 @@ onMounted(async () => {
 }
 
 .app {
+  --font-ui: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-heading: 'Noto Serif SC', 'Noto Sans SC', 'PingFang SC', serif;
+  --font-hero: 'ZCOOL XiaoWei', 'Noto Serif SC', serif;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --text-faint: #94a3b8;
+  --surface-page: #eef2f7;
+  --surface-card: #ffffff;
+  --surface-muted: #f1f5f9;
+  --surface-accent: #eff6ff;
+  --border-subtle: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --accent: #3b6fd8;
+  --accent-soft: rgba(59, 111, 216, 0.12);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-md: 0 4px 20px rgba(15, 23, 42, 0.07);
+  --content-max: 1120px;
+  --prose-width: 65ch;
+
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background-color: #f5f7fa;
-  font-family: 'PingFang SC', 'Helvetica Neue', Arial, sans-serif;
+  background-color: var(--surface-page);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.65;
+  font-weight: 400;
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
 }
 
-/* 头部样式 */
+/* Element Plus 卡片：统一圆角与标题区层次 */
+:deep(.el-card) {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-sm);
+}
+
+:deep(.el-card__header) {
+  padding: 1rem 1.35rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: linear-gradient(180deg, #fafbfc 0%, #f8fafc 100%);
+}
+
+:deep(.el-card__body) {
+  padding: 1.35rem 1.5rem 1.5rem;
+}
+
+:deep(.el-divider) {
+  margin: 1.75rem 0;
+}
+
 .header {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  padding: 2rem 0;
+  position: relative;
+  overflow: hidden;
+  color: #f1f5f9;
+  padding: 2.75rem clamp(1rem, 4vw, 2rem) 2.75rem;
   text-align: center;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-md);
+}
+
+.header-backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 120% 80% at 50% -20%, rgba(124, 142, 245, 0.35), transparent 55%),
+    linear-gradient(165deg, #0f172a 0%, #1e293b 42%, #312e81 100%);
+  pointer-events: none;
+}
+
+.header-backdrop::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.07;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 .header-content {
-  max-width: 1200px;
+  position: relative;
+  z-index: 1;
+  max-width: var(--content-max);
   margin: 0 auto;
-  padding: 0 2rem;
+  padding: 0 clamp(0.75rem, 3vw, 1.5rem);
 }
 
-.logo {
+.brand-row {
   display: flex;
-  align-items: center;
   justify-content: center;
-  gap: 1rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
-.logo-icon {
-  font-size: 2.5rem;
+.brand-logo-mark {
+  display: flex;
+  justify-content: center;
 }
 
-.header h1 {
-  margin: 0;
-  font-size: 2.5rem;
+.hero-title {
+  /* 覆盖全局 style.css 中 h1 的默认外边距与大字号层级 */
+  margin: 0 auto;
+  max-width: 22em;
+  font-family: var(--font-hero);
+  font-size: clamp(1.6rem, 4vw, 2.25rem);
   font-weight: 600;
+  line-height: 1.38;
+  letter-spacing: 0.1em;
+  text-wrap: balance;
+  background: linear-gradient(180deg, #ffffff 0%, #e2e8f0 55%, #94a3b8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 2px 20px rgba(15, 23, 42, 0.35));
 }
 
-.header p {
-  margin: 0.5rem 0 0;
-  font-size: 1.2rem;
-  opacity: 0.9;
+.hero-subtitle {
+  margin: 1.1rem 0 0;
+  font-family: var(--font-ui);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: none;
+  color: rgba(226, 232, 240, 0.82);
 }
 
-/* 主内容样式 */
 .main {
   flex: 1;
-  padding: 2rem;
-  max-width: 1200px;
+  padding: clamp(1.25rem, 4vw, 2.25rem) clamp(1rem, 4vw, 2rem);
+  max-width: calc(var(--content-max) + 4rem);
   margin: 0 auto;
   width: 100%;
 }
@@ -1097,7 +1015,13 @@ onMounted(async () => {
 
 .input-textarea {
   resize: vertical;
-  font-size: 16px;
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+:deep(.input-textarea textarea) {
+  font-family: var(--font-ui);
+  line-height: 1.65;
 }
 
 .hot-questions {
@@ -1146,6 +1070,20 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 1rem;
+}
+
+.panel-title {
+  font-family: var(--font-heading);
+  font-size: 1.0625rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-primary);
+}
+
+.panel-title-icon {
+  font-size: 1.125rem;
+  color: var(--text-muted);
 }
 
 .header-actions {
@@ -1161,36 +1099,68 @@ onMounted(async () => {
   transform: translateY(-1px);
 }
 
-/* 需求分析区样式 */
 .need-analysis {
   margin-bottom: 2rem;
 }
 
 .section-title {
-  font-size: 1.5rem;
-  font-weight: 600;
-  margin-bottom: 1rem;
-  color: #303133;
+  font-family: var(--font-heading);
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.35;
+  margin: 0 0 1.25rem;
+  padding-bottom: 0.65rem;
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--accent-soft);
+  box-shadow: 0 1px 0 0 rgba(59, 111, 216, 0.08);
 }
 
-.subsection-title {
-  font-size: 1.2rem;
-  font-weight: 500;
-  margin: 1.5rem 0 0.5rem;
-  color: #409EFF;
+.content-heading {
+  font-family: var(--font-heading);
+  font-size: 1.0625rem;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.03em;
+  margin: 1.5rem 0 0.75rem;
+  color: var(--text-primary);
+}
+
+.content-heading:first-child {
+  margin-top: 0;
+}
+
+.weights-section > .content-heading {
+  margin-top: 0;
 }
 
 .need-validation {
-  background-color: #f0f9eb;
-  padding: 1rem;
-  border-radius: 4px;
-  margin-bottom: 1rem;
+  background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%);
+  padding: 1.1rem 1.2rem;
+  border-radius: var(--radius-md);
+  margin-bottom: 1.25rem;
+  border: 1px solid rgba(34, 197, 94, 0.2);
 }
 
 .need-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 1rem;
+  text-align: left;
+}
+
+.need-header > span {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  word-break: break-word;
+}
+
+.need-header strong {
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .edit-button {
@@ -1215,61 +1185,27 @@ onMounted(async () => {
   justify-content: flex-end;
 }
 
+.task-type-line {
+  margin: 1rem 0 0.5rem;
+  font-family: var(--font-heading);
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.55;
+  max-width: var(--prose-width);
+}
+
 .requirement-list {
-  padding-left: 1.5rem;
-  margin: 0.5rem 0 1rem;
+  padding-left: 1.25rem;
+  margin: 0.35rem 0 1.25rem;
+  max-width: var(--prose-width);
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
 }
 
 .weights-section {
-  margin-top: 1.5rem;
-}
-
-.weights-container {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2rem;
-  margin-top: 1rem;
-}
-
-.weight-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 100px;
-}
-
-.weight-circle {
-  display: flex;
-  justify-content: center;
-}
-
-.weight-explanation {
-  margin-top: 1.5rem;
-  background-color: #ecf5ff;
-  padding: 1rem;
-  border-radius: 4px;
-}
-
-.explanation-list {
-  padding-left: 1.5rem;
-  margin-top: 0.5rem;
-}
-
-/* 项目对比区样式 */
-.project-comparison {
-  margin-bottom: 2rem;
-}
-
-.comparison-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1rem;
-}
-
-.dimension-select {
-  width: 150px;
+  margin-top: 1.75rem;
+  padding-top: 0.25rem;
 }
 
 .chart {
@@ -1278,40 +1214,57 @@ onMounted(async () => {
   margin-top: 1rem;
 }
 
-.chart-explanation {
-  margin-top: 1rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 14px;
-  color: #606266;
+.chart-weights {
+  height: 380px;
+  min-height: 280px;
 }
 
-.color-legend {
-  display: flex;
-  gap: 1rem;
+/* 正文与分点统一左对齐 */
+.need-analysis,
+.project-details,
+.project-info {
+  text-align: left;
 }
 
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
+.requirement-list,
+.analysis-list,
+.suggestions-list {
+  text-align: left;
+  list-style-position: outside;
+  padding-left: 1.35rem;
+  margin-left: 0;
 }
 
-.color-box {
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
+.analysis-list li,
+.suggestions-list li,
+.requirement-list li {
+  text-align: left;
+  line-height: 1.65;
 }
 
-/* 项目详情区样式 */
+.project-analysis,
+.project-suggestions {
+  text-align: left;
+}
+
+.project-analysis .content-heading,
+.project-suggestions .content-heading,
+.dimension-scores .content-heading {
+  text-align: left;
+}
+
+.project-core-info p,
+.core-data p {
+  text-align: left;
+}
+
 .project-details {
-  margin-top: 2rem;
+  margin-top: 0.5rem;
 }
 
 .project-card {
-  margin-bottom: 2rem;
-  transition: all 0.3s ease;
+  margin-bottom: 1.75rem;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
 }
 
 .project-card:hover {
@@ -1319,28 +1272,38 @@ onMounted(async () => {
 }
 
 .recommended-card {
-  border: 2px solid #67C23A;
+  border: 2px solid rgba(34, 197, 94, 0.55) !important;
+  box-shadow: 0 4px 24px rgba(34, 197, 94, 0.12);
 }
 
 .project-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 0.75rem;
 }
 
 .project-title {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.5rem 0.65rem;
+  text-align: left;
 }
 
 .project-name {
-  font-size: 1.2rem;
-  font-weight: 600;
+  font-family: var(--font-heading);
+  font-size: 1.125rem;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
 }
 
 .recommend-tag {
   font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .favorite-button {
@@ -1352,79 +1315,195 @@ onMounted(async () => {
 }
 
 .project-info {
-  margin-top: 1rem;
+  margin-top: 1.1rem;
 }
 
 .project-core-info {
   margin-bottom: 1.5rem;
 }
 
+.project-core-info > p {
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  color: var(--text-secondary);
+  max-width: var(--prose-width);
+}
+
+.project-core-info strong {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.project-links {
+  margin: 0.75rem 0;
+}
+
+.project-links p {
+  margin: 0.35rem 0;
+  font-size: 0.875rem;
+}
+
 .project-link {
-  color: #409EFF;
+  color: var(--accent);
   text-decoration: none;
-  transition: all 0.3s ease;
+  font-weight: 500;
+  transition: color 0.2s ease;
 }
 
 .project-link:hover {
+  color: #2563eb;
   text-decoration: underline;
-  color: #667eea;
+}
+
+.core-data {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.45rem 1rem;
+  margin-top: 1rem;
+  padding: 1rem 1.1rem;
+  background: var(--surface-muted);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.875rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+@media (min-width: 520px) {
+  .core-data {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.core-data p {
+  margin: 0;
+}
+
+.core-data strong {
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
 .dimension-scores {
   margin-top: 1.5rem;
+  padding-top: 0.25rem;
+}
+
+.dimension-scores-lead {
+  margin: 0 0 1rem;
+  font-size: 0.8125rem;
+  line-height: 1.65;
+  color: var(--text-muted);
+  text-align: left;
+}
+
+.dimension-scores-lead strong {
+  font-weight: 700;
+  color: var(--text-secondary);
 }
 
 .score-item {
-  margin-bottom: 0.75rem;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+
+@media (min-width: 560px) {
+  .score-item {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 0.75rem 1rem;
+  }
+}
+
+.score-item :deep(.el-progress) {
+  flex: 1;
+  min-width: 0;
+  padding-top: 0.15rem;
+}
+
+.dimension-col {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+@media (min-width: 560px) {
+  .dimension-col {
+    flex: 0 0 13.5rem;
+    max-width: 42%;
+  }
+}
+
+.dimension-label-row {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 
 .dimension {
-  display: inline-block;
-  width: 100px;
-  font-weight: 500;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.4;
+  cursor: default;
+  border-bottom: 1px dashed var(--border-strong);
+}
+
+.score-hint {
+  flex-shrink: 0;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  opacity: 0.9;
+  cursor: help;
+}
+
+.dimension-hint {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+  text-align: left;
 }
 
 .project-analysis {
   margin-top: 1.5rem;
-  padding: 1rem;
-  background-color: #f0f9eb;
-  border-radius: 4px;
+  padding: 1.15rem 1.2rem;
+  background: linear-gradient(165deg, #f0fdf4 0%, #ecfdf5 100%);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(34, 197, 94, 0.18);
 }
 
 .analysis-list {
-  padding-left: 1.5rem;
+  padding-left: 1.2rem;
   margin-top: 0.5rem;
 }
 
 .analysis-list li {
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.55rem;
 }
 
 .project-suggestions {
   margin-top: 1.5rem;
-  padding: 1rem;
-  background-color: #ecf5ff;
-  border-radius: 4px;
+  padding: 1.15rem 1.2rem;
+  background: linear-gradient(165deg, #eff6ff 0%, #f0f9ff 100%);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(59, 130, 246, 0.2);
 }
 
 .suggestions-list {
-  padding-left: 1.5rem;
+  padding-left: 1.2rem;
   margin-top: 0.5rem;
 }
 
 .suggestions-list li {
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.55rem;
 }
 
-/* 雷达图区样式 */
-.radar-section {
-  margin-top: 2rem;
-}
-
-/* 历史记录区样式 */
 .history-section {
   margin-top: 2rem;
 }
@@ -1432,30 +1511,38 @@ onMounted(async () => {
 .history-list {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.6rem;
 }
 
 .history-item {
-  padding: 1rem;
-  background-color: #f5f7fa;
-  border-radius: 4px;
+  padding: 0.9rem 1rem;
+  background: var(--surface-muted);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+  text-align: left;
 }
 
 .history-item:hover {
-  background-color: #ecf5ff;
-  transform: translateX(5px);
+  background: var(--surface-card);
+  border-color: var(--border-subtle);
+  transform: translateX(4px);
+  box-shadow: var(--shadow-sm);
 }
 
 .history-need {
+  font-size: 0.875rem;
   font-weight: 500;
-  margin-bottom: 0.25rem;
+  line-height: 1.55;
+  color: var(--text-primary);
+  margin-bottom: 0.35rem;
 }
 
 .history-time {
-  font-size: 12px;
-  color: #909399;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  color: var(--text-faint);
 }
 
 /* 回到顶部按钮 */
@@ -1472,48 +1559,58 @@ onMounted(async () => {
   box-shadow: 0 4px 12px 0 rgba(64, 158, 255, 0.4);
 }
 
-/* 页脚样式 */
 .footer {
-  background-color: #333;
-  color: white;
-  padding: 2rem 0;
-  margin-top: 2rem;
+  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  color: #e2e8f0;
+  padding: 2.5rem 0;
+  margin-top: 2.5rem;
+  border-top: 1px solid rgba(148, 163, 184, 0.15);
 }
 
 .footer-content {
-  max-width: 1200px;
+  max-width: var(--content-max);
   margin: 0 auto;
-  padding: 0 2rem;
+  padding: 0 clamp(1rem, 4vw, 2rem);
   display: flex;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 2rem;
+  gap: 2rem 2.5rem;
 }
 
 .footer-section {
   flex: 1;
-  min-width: 250px;
+  min-width: 220px;
+  text-align: left;
 }
 
 .footer-section h4 {
-  margin-bottom: 1rem;
-  color: #409EFF;
+  font-family: var(--font-heading);
+  font-size: 0.875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.75rem;
+  color: #93c5fd;
 }
 
 .footer-section p {
   margin-bottom: 0.5rem;
-  line-height: 1.5;
+  font-size: 0.875rem;
+  line-height: 1.65;
+  color: #cbd5e1;
+  max-width: 42ch;
 }
 
 .footer-section a {
-  color: white;
+  color: #e2e8f0;
   text-decoration: none;
-  margin-right: 1rem;
-  transition: all 0.3s ease;
+  margin-right: 1.1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: color 0.2s ease;
 }
 
 .footer-section a:hover {
-  color: #409EFF;
+  color: #93c5fd;
 }
 
 /* 响应式设计 */
@@ -1522,26 +1619,16 @@ onMounted(async () => {
     padding: 1rem;
   }
   
-  .header h1 {
-    font-size: 2rem;
-  }
-  
-  .logo-icon {
-    font-size: 2rem;
-  }
-  
-  .weights-container {
-    gap: 1rem;
+  .hero-title {
+    letter-spacing: 0.08em;
   }
   
   .chart {
     height: 300px;
   }
   
-  .comparison-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.5rem;
+  .chart-weights {
+    height: 300px;
   }
   
   .footer-content {

@@ -156,12 +156,12 @@ code {
   }
 }
 
+/* 应用根：全宽排版，由各页面组件控制对齐（避免全局居中破坏表单与长文） */
 #app {
-  width: 1126px;
+  width: 100%;
   max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
+  margin: 0;
+  text-align: start;
   min-height: 100svh;
   display: flex;
   flex-direction: column;

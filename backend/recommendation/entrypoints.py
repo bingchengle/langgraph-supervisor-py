@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-开源项目智能选型助手 - 模块化实现
+推荐系统的对外入口：调用 Supervisor 流水线，并在控制台打印可读「选型报告」。
+
+API 层应从此模块导入 ``analyze_user_need``；命令行可直接运行本文件做联调。
 """
 
 import json
@@ -9,15 +11,16 @@ import os
 
 try:
     from core.security import normalize_text
-    from core.workflow import get_recommendation_graph
+
+    from .supervisor import invoke_recommendation
 except ImportError:
     import sys
     from pathlib import Path
 
-    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+    from recommendation.supervisor import invoke_recommendation
     from security import normalize_text
-    from workflow import get_recommendation_graph
 
 os.environ["PYTHONIOENCODING"] = "utf-8"
 os.environ["LANG"] = "zh_CN.UTF-8"
@@ -25,21 +28,18 @@ os.environ["LC_ALL"] = "zh_CN.UTF-8"
 
 
 def analyze_user_need(user_need):
-    """分析用户需求并推荐项目。"""
-    state = get_recommendation_graph().invoke({"user_need": user_need})
-    final_response = state.get("final_response", {})
+    """分析用户需求并推荐项目，返回与 API 一致的 ``final_response`` 字典。"""
+    final_response = invoke_recommendation(user_need)
     llm_result = final_response.get("llm_result", {})
     normalized_user_need = final_response.get("user_need", normalize_text(user_need))
     final_projects = final_response.get("projects", [])
-
-    if not state.get("blocked"):
+    if not final_response.get("blocked"):
         generate_report(final_projects, normalized_user_need, llm_result)
-
     return final_response
 
 
 def generate_report(projects, user_need, llm_result):
-    """生成选型报告。"""
+    """将结构化结果格式化为控制台选型报告。"""
     try:
         print("\n=== 开源项目智能选型报告 ===")
         print(f"用户需求: {user_need}")

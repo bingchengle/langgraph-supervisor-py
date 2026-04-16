@@ -1,11 +1,11 @@
 import pytest
 from unittest.mock import Mock, patch
-from agents.popularity_agent import create_popularity_agent
-from agents.maturity_agent import create_maturity_agent
-from agents.ecosystem_agent import create_ecosystem_agent
-from agents.risk_agent import create_risk_agent
-from agents.scenario_agent import create_scenario_agent
-from agents.trend_agent import create_trend_agent
+from agents.experts.popularity_agent import create_popularity_agent
+from agents.experts.maturity_agent import create_maturity_agent
+from agents.experts.ecosystem_agent import create_ecosystem_agent
+from agents.experts.risk_agent import create_risk_agent
+from agents.experts.scenario_agent import create_scenario_agent
+from agents.experts.trend_agent import create_trend_agent
 
 class TestAgents:
     def setup_method(self):

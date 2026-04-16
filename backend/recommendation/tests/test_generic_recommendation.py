@@ -4,7 +4,12 @@
 测试通用推荐能力
 """
 
-from simple_app import analyze_user_need
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from recommendation.entrypoints import analyze_user_need
 
 # 测试用例
 test_cases = [

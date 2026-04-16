@@ -16,6 +16,37 @@ requests.adapters.DEFAULT_RETRIES = 5
 PROJECT_ANALYSIS_CACHE_TTL_SECONDS = 900
 _PROJECT_ANALYSIS_CACHE: dict[str, tuple[float, dict]] = {}
 
+# 与前端展示一致的维度默认说明（LLM 未返回 dimension_explanations 时使用）
+_DEFAULT_DIMENSION_EXPLANATIONS: dict[str, str] = {
+    "流行度": "项目的受欢迎程度，基于 Star 数、下载量等指标。",
+    "成熟度": "项目的稳定程度，基于版本历史、维护频率等指标。",
+    "生态": "项目的生态系统丰富程度，基于插件、扩展与社区集成等指标。",
+    "风险": "项目的风险程度，基于安全漏洞与依赖健康度等指标。",
+    "上手难度": "项目的学习曲线，基于文档、示例与 API 复杂度等指标。",
+    "性能": "项目的运行效率，基于速度与资源占用等指标。",
+    "体积": "项目体量与依赖规模，基于安装包与依赖数量等指标。",
+    "文档友好度": "文档与示例的完整度与可读性。",
+}
+
+
+def _merge_dimension_explanations(
+    weights: dict[str, float],
+    raw: dict[str, object] | None,
+    _user_need: str,
+) -> dict[str, str]:
+    """保证每个权重维度都有一句说明；优先使用 LLM 返回的文案。"""
+    out: dict[str, str] = {}
+    raw = raw if isinstance(raw, dict) else {}
+    for dim in weights:
+        text = raw.get(dim)
+        if isinstance(text, str) and text.strip():
+            out[dim] = normalize_text(text).strip()
+        else:
+            out[dim] = _DEFAULT_DIMENSION_EXPLANATIONS.get(
+                dim, "该维度用于从多侧面比较候选开源项目。"
+            )
+    return out
+
 
 def _build_canonical_query(text: str) -> str:
     normalized = normalize_text(text).strip().lower()
@@ -198,9 +229,17 @@ def get_llm_requirement_analysis(prompt, model="gpt-3.5-turbo", api_key=None):
             "你是一个开源项目推荐助手，需要一次性完成意图理解和评估方案生成。"
             "请返回一个JSON对象，包含以下字段："
             "0. intent: 对象，包含 core_keywords、search_query、semantic_queries、intent_summary"
-            "1. key_requirements: 关键需求点列表 "
-            "2. dimensions_needed: 需要的评估维度列表 "
-            "3. weights: 各维度的权重字典，总和为1"
+            "1. key_requirements: 关键需求点列表"
+            "2. dimensions_needed: 需要的评估维度列表"
+            "3. weights: 各维度的权重字典，键为中文维度名，数值为 0-1 的小数，所有权重之和为 1。"
+            "必须根据用户措辞明显调整：例如强调「热门/受欢迎/Star」应显著提高「流行度」；"
+            "强调「稳定/成熟/生产级」应提高「成熟度」与「风险」（风险分数高表示更安全）；"
+            "强调「新手/易上手/文档」应提高「上手难度」与「文档友好度」（若列出该维度）；"
+            "勿对不同侧重给出几乎相同的权重分布。"
+            "4. task_type: 一句话概括用户需求所属场景或任务类型（例如「RAG 应用」「Agent 开发」「PDF 处理」）"
+            "5. dimension_explanations: 对象，键必须与 weights 中的每一个键完全一致，"
+            "值为一句中文（不超过 80 字），结合用户当前需求说明「为何该维度在本次选型中重要」；"
+            "不要复述权重数字，要面向用户可读。"
         )
         result = _call_chat_completion(prompt, system_prompt)
         if result and isinstance(result.get("weights"), dict) and isinstance(result.get("intent"), dict):
@@ -214,6 +253,15 @@ def get_llm_requirement_analysis(prompt, model="gpt-3.5-turbo", api_key=None):
                 if not isinstance(intent.get("semantic_queries"), list):
                     intent["semantic_queries"] = [intent.get("search_query", prompt)]
                 result["intent"] = intent
+                if not isinstance(result.get("task_type"), str) or not str(result.get("task_type")).strip():
+                    summary = intent.get("intent_summary") or prompt
+                    result["task_type"] = normalize_text(str(summary))[:64]
+                raw_exp = result.get("dimension_explanations")
+                result["dimension_explanations"] = _merge_dimension_explanations(
+                    result["weights"],
+                    raw_exp if isinstance(raw_exp, dict) else None,
+                    prompt,
+                )
                 return result
 
         intent_result = get_llm_intent_analysis(prompt)
@@ -230,29 +278,36 @@ def get_llm_requirement_analysis(prompt, model="gpt-3.5-turbo", api_key=None):
         total_weight = sum(weights.values())
         if abs(total_weight - 1.0) > 0.01:
             weights = {k: v / total_weight for k, v in weights.items()}
+        summary = intent_result.get("intent_summary") or prompt
         return {
+            "task_type": normalize_text(str(summary))[:64],
             "key_requirements": intent_result.get("core_keywords", ["功能完整", "易于使用"]),
             "dimensions_needed": list(weights.keys()),
             "weights": weights,
             "intent": intent_result,
+            "dimension_explanations": _merge_dimension_explanations(weights, None, prompt),
         }
     except Exception as exc:
         print(f"调用大语言模型失败: {exc}")
         intent_result = get_llm_intent_analysis(prompt) if prompt else {}
         if not intent_result:
             intent_result = _extract_keywords_fallback(normalize_text(prompt))
+        fb_weights = {
+            "流行度": 0.1,
+            "成熟度": 0.2,
+            "生态": 0.15,
+            "风险": 0.2,
+            "上手难度": 0.25,
+            "性能": 0.1,
+        }
+        summary = intent_result.get("intent_summary") or prompt
         return {
+            "task_type": normalize_text(str(summary))[:64],
             "key_requirements": intent_result.get("core_keywords", ["功能完整", "易于使用"]),
             "dimensions_needed": ["流行度", "成熟度", "生态", "风险", "上手难度", "性能"],
-            "weights": {
-                "流行度": 0.1,
-                "成熟度": 0.2,
-                "生态": 0.15,
-                "风险": 0.2,
-                "上手难度": 0.25,
-                "性能": 0.1,
-            },
+            "weights": fb_weights,
             "intent": intent_result,
+            "dimension_explanations": _merge_dimension_explanations(fb_weights, None, prompt),
         }
 
 

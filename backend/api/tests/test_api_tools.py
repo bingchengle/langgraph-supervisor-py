@@ -7,10 +7,9 @@
 import sys
 import os
 
-# 添加当前目录到Python路径
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-from simple_app import analyze_user_need
+from recommendation.entrypoints import analyze_user_need
 
 if __name__ == "__main__":
     # 测试用户输入：推荐几个api工具相关的项目

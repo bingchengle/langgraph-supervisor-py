@@ -1,4 +1,9 @@
-from simple_app import analyze_user_need
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from recommendation.entrypoints import analyze_user_need
 
 # 测试适合新手的微调项目
 result = analyze_user_need('适合新手的微调项目')
